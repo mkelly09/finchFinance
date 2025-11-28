@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Add Expense</title>
+    <style>
+        table {
+            border-collapse: collapse;
+            margin-bottom: 20px;
+            width: 100%;
+        }
+        th, td {
+            padding: 10px;
+            border: 1px solid #aaa;
+        }
+        input, select, textarea {
+            width: 100%;
+            box-sizing: border-box;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Add New Expense</h1>
+
+    <form method="post">
+        {% csrf_token %}
+        <table>
+            <tr>
+                <th>Date</th>
+                <th>Vendor Name</th>
+                <th>Category</th>
+                <th>Amount</th>
+                <th>Location</th>
+                <th>Notes</th>
+            </tr>
+            <tr>
+                <td>{{ form.date }}</td>
+                <td>{{ form.vendor_name }}</td>
+                <td>{{ form.category }}</td>
+                <td>{{ form.amount }}</td>
+                <td>{{ form.location }}</td>
+                <td>{{ form.notes }}</td>
+            </tr>
+        </table>
+        <button type="submit">Add Expense</button>
+    </form>
+
+    <hr>
+
+    <h2>Current Expenses</h2>
+
+    <table>
+        <tr>
+            <th>Date</th>
+            <th>Vendor</th>
+            <th>Category</th>
+            <th>Amount</th>
+            <th>Location</th>
+            <th>Notes</th>
+        </tr>
+        {% for expense in expenses %}
+        <tr>
+            <td>{{ expense.date }}</td>
+            <td>{{ expense.vendor_name }}</td>
+            <td>{{ expense.category.name }}</td>
+            <td>${{ expense.amount }}</td>
+            <td>{{ expense.location }}</td>
+            <td>{{ expense.notes }}</td>
+        </tr>
+        {% empty %}
+        <tr>
+            <td colspan="6">No expenses yet.</td>
+        </tr>
+        {% endfor %}
+    </table>
+
+</body>
+</html>

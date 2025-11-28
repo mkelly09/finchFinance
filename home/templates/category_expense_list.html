@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% load dict_filters %}
+
+{% block content %}
+<div class="container mt-4">
+  <h2>Expenses in "{{ category.name }}"</h2>
+
+  <a href="{% url 'category_progress' %}?month={{ selected_month }}" class="btn btn-outline-primary mb-4">
+    ← Back to Category Progress
+  </a>
+
+  {% if has_limit %}
+    <p><strong>Monthly Limit:</strong> ${{ monthly_limit|floatformat:2 }}</p>
+  {% endif %}
+
+  <canvas id="trendChart" height="80" class="mb-4"></canvas>
+
+  {% if sorted_months %}
+    {% for month_key in sorted_months %}
+      {% with total=totals_by_month|get_item:month_key %}
+        <h4 class="mt-4">{{ month_key|date:"F Y" }} — Total: ${{ total|floatformat:2 }}
+          {% if has_limit %}
+            <small>
+  ({{ percentages_by_month|get_item:month_key }}% of limit)
+</small>
+          {% endif %}
+        </h4>
+        <table class="table table-striped table-bordered">
+          <thead class="table-light">
+            <tr>
+              <th>Date</th>
+              <th>Vendor</th>
+              <th>Amount</th>
+              <th>Location</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for expense in expenses_by_month|get_item:month_key %}
+              <tr>
+                <td>{{ expense.date }}</td>
+                <td>{{ expense.vendor_name }}</td>
+                <td>${{ expense.amount|floatformat:2 }}</td>
+                <td>{{ expense.location }}</td>
+                <td>{{ expense.notes }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% endwith %}
+    {% endfor %}
+  {% else %}
+    <p>No expenses found for this category.</p>
+  {% endif %}
+</div>
+
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+  const trendCtx = document.getElementById('trendChart').getContext('2d');
+  const trendChart = new Chart(trendCtx, {
+    type: 'bar',
+    data: {
+      labels: {{ trend_labels|safe }},
+      datasets: [{
+        label: 'Monthly Spend',
+        data: {{ trend_values|safe }},
+        backgroundColor: 'rgba(54, 162, 235, 0.6)',
+        borderColor: 'rgba(54, 162, 235, 1)',
+        borderWidth: 1
+      }]
+    },
+    options: {
+      plugins: {
+        title: {
+          display: true,
+          text: '4-Month Spending Trend'
+        }
+      },
+      scales: {
+        y: {
+          beginAtZero: true,
+          ticks: {
+            callback: function(value) {
+              return '$' + value;
+            }
+          }
+        }
+      }
+    }
+  });
+</script>
+{% endblock %}

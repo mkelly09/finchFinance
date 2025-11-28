@@ -1,0 +1,530 @@
+{% extends 'base.html' %}
+{% load form_filters %}
+
+{% block content %}
+<div class="container mt-4">
+  <!-- Summary -->
+  <div class="row mb-4">
+    <div class="col">
+      <h2>Summary for {{ selected_month_display }}</h2>
+      <p><strong>Total Income:</strong> ${{ total_income|floatformat:2 }}</p>
+      <p><strong>Total Expenses:</strong> ${{ total_expenses|floatformat:2 }}</p>
+      <p><strong>Net Savings:</strong> ${{ net_savings|floatformat:2 }}</p>
+    </div>
+  </div>
+
+
+  <!-- Month Selector -->
+  <!-- (remaining content continues as-is...) -->
+
+
+  <!-- Month Selector -->
+  <div class="row mb-4">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-auto">
+        <label for="month" class="form-label">Select Month:</label>
+        <input type="month" name="month" id="month" class="form-control" value="{{ selected_month }}">
+      </div>
+      <div class="col-auto">
+        <button type="submit" class="btn btn-primary">Go</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Add Transaction -->
+<div class="row mb-4">
+  <h4>Add Transaction</h4>
+  <form method="post" class="row gx-2 gy-2 align-items-end">
+    {% csrf_token %}
+    <div class="col-auto">
+      <label for="id_entry_type">Type:</label>
+      {{ form.entry_type|add_class:"form-select" }}
+    </div>
+    <div class="col-auto">
+      <label for="id_date">Date:</label>
+      {{ form.date|add_class:"form-control" }}
+    </div>
+    <div class="w-100"></div>
+    <div class="col-auto">
+      <label for="id_amount">Amount:</label>
+      {{ form.amount|add_class:"form-control" }}
+    </div>
+    <div class="col-auto expense-field">
+      <label for="id_vendor_name">Vendor:</label>
+      {{ form.vendor_name|add_class:"form-control" }}
+    </div>
+    <div class="col-auto expense-field">
+      <label for="id_category">Category:</label>
+      {{ form.category|add_class:"form-select" }}
+    </div>
+    <div class="col-auto expense-field">
+      <label for="id_location">Location:</label>
+      {{ form.location|add_class:"form-control" }}
+    </div>
+    <div class="col-auto income-field">
+      <label for="id_source">Source:</label>
+      {{ form.source|add_class:"form-control" }}
+    </div>
+   <div class="col-auto income-field form-check mt-2">
+  {{ form.taxable|add_class:"form-check-input" }}
+  <label class="form-check-label" for="id_taxable">Taxable</label>
+</div>
+
+    <div class="col-auto">
+      <label for="id_notes">Notes:</label>
+      <input type="text" name="notes" id="id_notes" class="form-control" style="width: 150px;" value="{{ form.notes.value|default:'' }}">
+    </div>
+    <div class="col-auto">
+      <button type="submit" class="btn btn-success">Submit</button>
+    </div>
+  </form>
+</div>
+
+
+  <script>
+  function toggleFields() {
+    const entryType = document.getElementById("id_entry_type").value;
+    document.querySelectorAll(".expense-field").forEach(el => {
+      el.style.display = entryType === "expense" ? "block" : "none";
+    });
+    document.querySelectorAll(".income-field").forEach(el => {
+      el.style.display = entryType === "income" ? "block" : "none";
+    });
+  }
+
+  function updateTaxableDefault() {
+    const sourceField = document.getElementById("id_source");
+    const taxableCheckbox = document.getElementById("id_taxable");
+    if (!sourceField || !taxableCheckbox) return;
+
+    const selected = sourceField.value;
+    if (selected === "Employment Income") {
+      taxableCheckbox.checked = false;
+    } else {
+      taxableCheckbox.checked = true;
+    }
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    document.getElementById("id_entry_type").addEventListener("change", () => {
+      toggleFields();
+      updateTaxableDefault();
+    });
+
+    const sourceField = document.getElementById("id_source");
+    if (sourceField) {
+      sourceField.addEventListener("change", updateTaxableDefault);
+    }
+
+    toggleFields();
+    updateTaxableDefault();
+  });
+</script>
+
+
+  <!-- Income Section -->
+<h3>Income</h3>
+{% if income_entries %}
+  <table class="table table-striped">
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Source</th>
+        <th>Amount</th>
+        <th>Taxable</th>
+        <th>Notes</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for income in income_entries|dictsortreversed:"date" %}
+  <tr onclick="openIncomeEditModal(
+    '{{ income.id }}',
+    '{{ income.date|date:"Y-m-d" }}',
+    '{{ income.category|escapejs }}',
+    '{{ income.amount }}',
+    '{{ income.taxable }}',
+    '{{ income.notes|escapejs }}'
+  )" style="cursor: pointer;">
+    <td>{{ income.date }}</td>
+    <td>{{ income.category }}</td>
+    <td>${{ income.amount|floatformat:2 }}</td>
+    <td>{{ income.taxable|yesno:"Yes,No" }}</td>
+    <td>{{ income.notes }}</td>
+  </tr>
+{% endfor %}
+
+    </tbody>
+  </table>
+{% else %}
+  <p>No income records found for this month.</p>
+{% endif %}
+
+
+  <!-- Expenses Table -->
+  <h3>Expenses</h3>
+  {% if expense_entries %}
+    <table class="table table-striped">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Vendor</th>
+          <th>Category</th>
+          <th>Location</th>
+          <th>Amount</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for expense in expense_entries|dictsortreversed:"date" %}
+  <tr onclick="openEditModal(
+    '{{ expense.id }}',
+    '{{ expense.date|date:"Y-m-d" }}',
+    '{{ expense.vendor_name|escapejs }}',
+    '{{ expense.category.name|escapejs }}',
+    '{{ expense.location|escapejs }}',
+    '{{ expense.amount }}',
+    '{{ expense.notes|escapejs }}'
+  )" style="cursor: pointer;">
+    <td>{{ expense.date }}</td>
+    <td>{{ expense.vendor_name }}</td>
+    <td>{{ expense.category.name }}</td>
+    <td>{{ expense.location }}</td>
+    <td>${{ expense.amount|floatformat:2 }}</td>
+    <td>{{ expense.notes }}</td>
+  </tr>
+{% endfor %}
+
+      </tbody>
+    </table>
+  {% else %}
+    <p>No expense records found for this month.</p>
+  {% endif %}
+</div>
+
+{{ expenses_by_category|json_script:"expenses-data" }}
+{{ targets_by_category|json_script:"targets-data" }}
+
+<h3>Spending by Category</h3>
+<canvas id="categoryChart" height="100"></canvas>
+<script>
+  document.addEventListener("DOMContentLoaded", () => {
+    const ctx = document.getElementById('categoryChart').getContext('2d');
+
+    const expensesData = JSON.parse(document.getElementById('expenses-data').textContent);
+    const targetsData = JSON.parse(document.getElementById('targets-data').textContent);
+
+    const labels = Object.keys(expensesData);
+    const actual = labels.map(label => parseFloat(expensesData[label] || 0));
+    const targets = labels.map(label => parseFloat(targetsData[label] || 0));
+
+    const data = {
+      labels: labels,
+      datasets: [
+        {
+          label: 'Actual Spend',
+          data: actual,
+          backgroundColor: 'rgba(54, 162, 235, 0.6)',
+          borderWidth: 1
+        },
+        {
+        label: 'Target Spend',
+        data: targets,
+        type: 'line',
+        borderColor: 'rgba(255, 99, 132, 1)',
+        borderWidth: 2,
+        fill: false,
+        tension: 0, // straight lines
+        stepped: 'middle', // steps through categories
+        pointRadius: 4,
+        pointBackgroundColor: 'rgba(255, 99, 132, 1)'
+      }
+
+      ]
+    };
+
+    const config = {
+      type: 'bar',
+      data: data,
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { position: 'top' },
+          title: {
+            display: true,
+            text: 'Actual vs Target Spending by Category'
+          }
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            title: {
+              display: true,
+              text: 'Amount ($)'
+            }
+          }
+        }
+      }
+    };
+
+    new Chart(ctx, config);
+  });
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+  document.addEventListener("DOMContentLoaded", () => {
+    const ctx = document.getElementById('categoryChart').getContext('2d');
+
+    const data = {
+      labels: {{ expenses_by_category.keys|safe }},
+      datasets: [
+        {
+          label: 'Actual Spend',
+          data: {{ expenses_by_category.values|safe }},
+          backgroundColor: 'rgba(54, 162, 235, 0.6)',
+          borderWidth: 1
+        },
+        {
+          label: 'Target Spend',
+          data: {{ targets_by_category.values|safe }},
+          type: 'line',
+          borderColor: 'rgba(255, 99, 132, 1)',
+          borderWidth: 2,
+          fill: false,
+          tension: 0.3
+        }
+      ]
+    };
+
+    const config = {
+      type: 'bar',
+      data: data,
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { position: 'top' },
+          title: {
+            display: true,
+            text: 'Actual vs Target Spending by Category'
+          }
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            title: {
+              display: true,
+              text: 'Amount ($)'
+            }
+          }
+        }
+      }
+    };
+
+    new Chart(ctx, config);
+  });
+</script>
+
+<!-- Modal Backdrop -->
+<div id="modalBackdrop" style="
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.5);
+  z-index: 999;
+"></div>
+
+<!-- Edit Expense Modal -->
+<div id="editExpenseModal" style="
+  display: none;
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+  z-index: 1000;
+  width: 600px;
+  max-width: 90%;
+">
+  <h3 class="mb-3">Edit Expense</h3>
+  <form method="post" id="edit-expense-form">
+    {% csrf_token %}
+    <input type="hidden" name="expense_id" id="edit-expense-id" />
+
+    <div class="container-fluid">
+      <div class="row mb-2">
+        <div class="col-4">
+          <label for="edit-date" class="form-label">Date:</label>
+          <input type="date" class="form-control" name="date" id="edit-date" required />
+        </div>
+        <div class="col-8">
+          <label for="edit-vendor" class="form-label">Vendor:</label>
+          <input type="text" class="form-control" name="vendor_name" id="edit-vendor" required />
+        </div>
+      </div>
+
+      <div class="row mb-2">
+        <div class="col-6">
+          <label for="edit-category" class="form-label">Category:</label>
+          <select name="category" id="edit-category" class="form-select" required>
+            {% for category in all_categories %}
+              <option value="{{ category.name }}">{{ category.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-6">
+          <label for="edit-location" class="form-label">Location:</label>
+          <input type="text" class="form-control" name="location" id="edit-location" />
+        </div>
+      </div>
+
+      <div class="row mb-2">
+        <div class="col-6">
+          <label for="edit-amount" class="form-label">Amount:</label>
+          <input type="number" step="0.01" class="form-control" name="amount" id="edit-amount" required />
+        </div>
+        <div class="col-6">
+          <label for="edit-notes" class="form-label">Notes:</label>
+          <input type="text" class="form-control" name="notes" id="edit-notes" />
+        </div>
+      </div>
+
+      <div class="text-end mt-3">
+        <button type="submit" class="btn btn-primary me-2">Save Changes</button>
+        <button type="submit" name="delete_expense" value="1" class="btn btn-danger me-2" onclick="return confirm('Are you sure?');">Delete</button>
+        <button type="button" class="btn btn-secondary" onclick="closeEditModal()">Cancel</button>
+      </div>
+    </div>
+  </form>
+</div>
+
+</form>
+
+</div>
+
+<!-- Edit Income Modal -->
+<div id="editIncomeModal" style="
+  display: none;
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+  z-index: 1000;
+  width: 600px;
+  max-width: 90%;
+">
+  <h3 class="mb-3">Edit Income</h3>
+  <form method="post" id="edit-income-form">
+    {% csrf_token %}
+    <input type="hidden" name="income_id" id="edit-income-id" />
+
+    <div class="container-fluid">
+      <div class="row mb-2">
+        <div class="col-6">
+          <label for="edit-income-date" class="form-label">Date:</label>
+          <input type="date" class="form-control" name="date" id="edit-income-date" required />
+        </div>
+        <div class="col-6">
+          <label for="edit-income-source" class="form-label">Source:</label>
+          <input type="text" class="form-control" name="source" id="edit-income-source" required />
+        </div>
+      </div>
+
+      <div class="row mb-2">
+        <div class="col-6">
+          <label for="edit-income-amount" class="form-label">Amount:</label>
+          <input type="number" step="0.01" class="form-control" name="amount" id="edit-income-amount" required />
+        </div>
+        <div class="col-6">
+          <label class="form-label">Taxable:</label><br />
+          <input type="checkbox" class="form-check-input" name="taxable" id="edit-income-taxable" />
+          <label class="form-check-label" for="edit-income-taxable">Yes</label>
+        </div>
+      </div>
+
+      <div class="row mb-3">
+        <div class="col-12">
+          <label for="edit-income-notes" class="form-label">Notes:</label>
+          <input type="text" class="form-control" name="notes" id="edit-income-notes" />
+        </div>
+      </div>
+
+      <div class="text-end mt-3">
+        <button type="submit" class="btn btn-primary me-2">Save Changes</button>
+        <button type="submit" name="delete_income" value="1" class="btn btn-danger me-2" onclick="return confirm('Are you sure?');">Delete</button>
+        <button type="button" class="btn btn-secondary" onclick="closeIncomeModal()">Cancel</button>
+      </div>
+    </div>
+  </form>
+</div>
+
+
+
+
+<script>
+function openEditModal(id, date, vendor, category, location, amount, notes) {
+  document.getElementById('edit-expense-id').value = id;
+  document.getElementById('edit-date').value = date;
+  document.getElementById('edit-vendor').value = vendor;
+  document.getElementById('edit-category').value = category;
+  document.getElementById('edit-location').value = location;
+  document.getElementById('edit-amount').value = amount;
+  document.getElementById('edit-notes').value = notes;
+
+  document.getElementById('modalBackdrop').style.display = 'block';
+  document.getElementById('editExpenseModal').style.display = 'block';
+}
+
+function closeEditModal() {
+  document.getElementById('modalBackdrop').style.display = 'none';
+  document.getElementById('editExpenseModal').style.display = 'none';
+}
+
+// Optional: click backdrop to close
+document.getElementById('modalBackdrop').addEventListener('click', closeEditModal);
+
+// Optional: ESC key to close
+document.addEventListener('keydown', function(event) {
+  if (event.key === "Escape") {
+    closeEditModal();
+  }
+});
+
+
+
+function openIncomeEditModal(id, date, source, amount, taxable, notes) {
+  document.getElementById("edit-income-id").value = id;
+  document.getElementById("edit-income-date").value = date;
+  document.getElementById("edit-income-source").value = source;
+  document.getElementById("edit-income-amount").value = amount;
+  document.getElementById("edit-income-taxable").checked = (taxable === 'True' || taxable === true);
+  document.getElementById("edit-income-notes").value = notes;
+
+  document.getElementById("modalBackdrop").style.display = "block";
+  document.getElementById("editIncomeModal").style.display = "block";
+}
+
+
+function closeIncomeModal() {
+  document.getElementById("editIncomeModal").style.display = "none";
+  document.getElementById("modalBackdrop").style.display = "none";
+}
+</script>
+
+
+
+
+
+
+
+
+{% endblock %}
