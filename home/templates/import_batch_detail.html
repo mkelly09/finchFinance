@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block content %}
+<div class="container mt-4">
+  <h2>Import Batch #{{ batch.id }}</h2>
+  <p class="text-muted">
+    Imported at {{ batch.imported_at|date:"Y-m-d H:i" }}{% if batch.bank_account %} for
+    <strong>{{ batch.bank_account }}</strong>{% endif %}.
+  </p>
+
+  <div class="row mb-4">
+    <div class="col-md-4">
+      <div class="card border-0 shadow-sm mb-3">
+        <div class="card-body">
+          <h6 class="text-muted mb-1">Date Range</h6>
+          <p class="mb-0">
+            {{ batch.earliest_date|date:"Y-m-d" }}
+            &rarr;
+            {{ batch.latest_date|date:"Y-m-d" }}
+          </p>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-8">
+      <div class="card border-0 shadow-sm mb-3">
+        <div class="card-body">
+          <div class="row text-center">
+            <div class="col">
+              <div class="text-muted small">Income</div>
+              <div class="fw-bold">
+                ${{ batch.total_income_amount|floatformat:2|intcomma }}
+              </div>
+            </div>
+            <div class="col">
+              <div class="text-muted small">Expenses</div>
+              <div class="fw-bold">
+                ${{ batch.total_expense_amount|floatformat:2|intcomma }}
+              </div>
+            </div>
+            <div class="col">
+              <div class="text-muted small">Net</div>
+              <div class="fw-bold {% if batch.net_amount < 0 %}text-danger{% else %}text-success{% endif %}">
+                ${{ batch.net_amount|floatformat:2|intcomma }}
+              </div>
+            </div>
+            <div class="col">
+              <div class="text-muted small">Transactions</div>
+              <div class="fw-bold">{{ batch.total_transactions }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {% if batch.filename %}
+    <p class="small text-muted">
+      Source file: <code>{{ batch.filename }}</code>
+    </p>
+  {% endif %}
+
+  <hr />
+
+  <div class="row">
+    <div class="col-md-6">
+      <h4>Income in this batch</h4>
+      {% if incomes %}
+        <table class="table table-sm table-striped align-middle">
+          <thead class="table-light">
+            <tr>
+              <th>Date</th>
+              <th>Source</th>
+              <th>Amount</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for income in incomes %}
+              <tr>
+                <td>{{ income.date|date:"Y-m-d" }}</td>
+                <td>{{ income.category }}</td>
+                <td>${{ income.amount|floatformat:2|intcomma }}</td>
+                <td>{{ income.notes }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="text-muted small">No income transactions in this batch.</p>
+      {% endif %}
+    </div>
+
+    <div class="col-md-6">
+      <h4>Expenses in this batch</h4>
+      {% if expenses %}
+        <table class="table table-sm table-striped align-middle">
+          <thead class="table-light">
+            <tr>
+              <th>Date</th>
+              <th>Vendor</th>
+              <th>Category</th>
+              <th>Amount</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for expense in expenses %}
+              <tr>
+                <td>{{ expense.date|date:"Y-m-d" }}</td>
+                <td>{{ expense.vendor_name }}</td>
+                <td>{{ expense.category.name }}</td>
+                <td>${{ expense.amount|floatformat:2|intcomma }}</td>
+                <td>{{ expense.notes }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="text-muted small">No expense transactions in this batch.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="mt-3">
+    <a href="{% url 'import_transactions' %}" class="btn btn-outline-secondary">
+      Back to Import Transactions
+    </a>
+  </div>
+</div>
+{% endblock %}

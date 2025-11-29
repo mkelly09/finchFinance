@@ -1,0 +1,627 @@
+{% load static %}
+{% load humanize %}
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Import Transactions</title>
+    <link rel="stylesheet"
+          href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
+
+    <style>
+        .row-auto td   { background-color: #fff9d6 !important; } /* light yellow */
+        .row-uncat td  { background-color: #f0f0f0 !important; } /* light grey  */
+        .row-manual td { background-color: #e6ffe6 !important; } /* light green */
+        .transition-bg { transition: background-color 0.3s ease; }
+
+        /* clearer styling for split groups */
+        .split-original td {
+            background-color: #e6f2ff !important;  /* slightly stronger blue */
+        }
+        .split-child td {
+            background-color: #f7fbff !important;  /* very light blue */
+        }
+        .split-label {
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: #0d6efd;
+            margin-top: 2px;
+        }
+    </style>
+</head>
+
+<body class="bg-light">
+<div class="container my-4">
+
+    <h1 class="mb-4">Import Transactions from CSV</h1>
+
+    {% if messages %}
+        {% for message in messages %}
+            <div class="alert alert-{{ message.tags }} mb-3">
+                {{ message }}
+            </div>
+        {% endfor %}
+    {% endif %}
+
+    {% if step == "upload" %}
+
+        <div class="card">
+            <div class="card-body">
+                <form method="post" enctype="multipart/form-data" id="upload-form">
+                    {% csrf_token %}
+                    <input type="hidden" name="step" value="upload">
+
+                    <div class="mb-3">
+                        {{ upload_form.csv_file.label_tag }}
+                        {{ upload_form.csv_file }}
+                        <div class="form-text">
+                            After selecting a file, it may take a few seconds to analyze larger CSVs.
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        {{ upload_form.bank_account.label_tag }}
+                        {{ upload_form.bank_account }}
+                        <div class="form-text">
+                            Choose which bank account this CSV belongs to.
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary" id="upload-submit-btn">
+                        Upload &amp; Preview
+                    </button>
+                    <a href="{% url 'dashboard' %}" class="btn btn-secondary">
+                        Back to Dashboard
+                    </a>
+
+                    <!-- Loading indicator shown while CSV is being uploaded/parsed -->
+                    <div id="upload-spinner" class="mt-3 text-muted small d-none">
+                        <div class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></div>
+                        Processing CSV… this may take a few seconds for larger files.
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        {% if recent_batches %}
+            <div class="mt-4">
+                <h4>Recent Imports</h4>
+                <p class="text-muted mb-2">
+                    The last {{ recent_batches|length }} import batches. Use this to confirm what date ranges
+                    you've already imported for each account.
+                </p>
+                <div class="table-responsive">
+                    <table class="table table-sm table-striped align-middle">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Imported At</th>
+                                <th>Bank Account</th>
+                                <th>Date Range</th>
+                                <th>Income</th>
+                                <th>Expenses</th>
+                                <th>Net</th>
+                                <th>Transactions</th>
+                                <th>File</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for batch in recent_batches %}
+                                <tr>
+                                    <td>{{ batch.imported_at|date:"Y-m-d H:i" }}</td>
+                                    <td>{{ batch.bank_account }}</td>
+                                    <td>
+                                        {{ batch.earliest_date|date:"Y-m-d" }} &rarr;
+                                        {{ batch.latest_date|date:"Y-m-d" }}
+                                    </td>
+                                    <td>
+                                        ${{ batch.total_income_amount|floatformat:2|intcomma }}
+                                    </td>
+                                    <td>
+                                        ${{ batch.total_expense_amount|floatformat:2|intcomma }}
+                                    </td>
+                                    <td>
+                                        ${{ batch.net_amount|floatformat:2|intcomma }}
+                                    </td>
+                                    <td>{{ batch.total_transactions }}</td>
+                                    <td>{{ batch.filename }}</td>
+                                    <td class="text-end">
+                                        <a href="{% url 'import_batch_detail' batch.id %}"
+                                           class="btn btn-sm btn-outline-secondary">
+                                            View details
+                                        </a>
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        {% else %}
+            <div class="mt-4 text-muted small">
+                No imports recorded yet. Once you import your first CSV, recent batches will appear here.
+            </div>
+        {% endif %}
+
+        <script>
+            document.addEventListener("DOMContentLoaded", function () {
+                const form = document.getElementById("upload-form");
+                const submitBtn = document.getElementById("upload-submit-btn");
+                const spinner = document.getElementById("upload-spinner");
+
+                if (form) {
+                    form.addEventListener("submit", function () {
+                        if (submitBtn) {
+                            submitBtn.disabled = true;
+                            submitBtn.innerHTML =
+                                '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>' +
+                                'Uploading &amp; Analyzing...';
+                        }
+                        if (spinner) {
+                            spinner.classList.remove("d-none");
+                        }
+                    });
+                }
+            });
+        </script>
+
+    {% elif step == "review" %}
+
+        {% if selected_bank_account %}
+            <div class="alert alert-info mb-3">
+                Bank account for this import:
+                <strong>{{ selected_bank_account }}</strong>
+            </div>
+        {% endif %}
+
+        <div class="mb-3">
+            <p class="mb-1">
+                Review each transaction. You can:
+            </p>
+            <ul class="mb-1">
+                <li>Change type, category, amount, location, notes</li>
+                <li><strong>Split</strong> a row into two parts (e.g., principal &amp; interest)</li>
+                <li><strong>Skip</strong> rows you don't want to import</li>
+            </ul>
+            <small class="text-muted">
+                Color legend:
+                <span class="px-2" style="background-color:#fff9d6;">Auto</span>,
+                <span class="px-2" style="background-color:#f0f0f0;">Uncategorized</span>,
+                <span class="px-2" style="background-color:#e6ffe6;">Manual/Confirmed</span>,
+                <span class="px-2" style="background-color:#e6f2ff;">Split Original</span>,
+                <span class="px-2" style="background-color:#f7fbff;">Split Part</span>
+            </small>
+        </div>
+
+        <form method="post" id="import-form">
+            {% csrf_token %}
+            <input type="hidden" name="step" value="review">
+            {% if selected_bank_account %}
+                <input type="hidden" name="bank_account_id" value="{{ selected_bank_account.id }}">
+            {% endif %}
+            {% if uploaded_filename %}
+                <input type="hidden" name="uploaded_filename" value="{{ uploaded_filename }}">
+            {% endif %}
+            {{ formset.management_form }}
+
+            <table class="table table-sm table-bordered align-middle" id="import-table">
+                <thead class="table-light">
+                <tr>
+                    <th>Type</th>
+                    <th>Date</th>
+                    <th>Vendor</th>
+                    <th>Amount</th>
+                    <th>Category (Expense/Income)</th>
+                    <th>Location</th>
+                    <th>Notes</th>
+                    <th style="width: 120px;">Actions</th>
+                </tr>
+                </thead>
+
+                <tbody>
+                {% for form in formset %}
+                    <tr class="transaction-row transition-bg"
+                        data-auto-initial="{% if form.initial.expense_category or form.initial.income_source %}1{% else %}0{% endif %}"
+                        data-user-changed="0">
+                        <td>{{ form.entry_type }}</td>
+                        <td>{{ form.date }}</td>
+                        <td>
+                            {{ form.vendor_name }}
+                            <!-- split label will be injected here -->
+                        </td>
+
+                        <td>
+                            <div class="input-group">
+                                <span class="input-group-text">$</span>
+                                {{ form.amount }}
+                            </div>
+                        </td>
+
+                        <td class="category-col">
+                            <div class="expense-wrapper">
+                                {{ form.expense_category }}
+                            </div>
+                            <div class="income-wrapper">
+                                {{ form.income_source }}
+                            </div>
+                        </td>
+
+                        <td>{{ form.location }}</td>
+                        <td>{{ form.notes }}</td>
+
+                        <td>
+                            <div class="d-flex flex-column gap-1">
+                                <button type="button" class="btn btn-sm btn-outline-secondary split-btn">
+                                    Split
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-danger skip-btn">
+                                    Skip
+                                </button>
+                            </div>
+
+                            {{ form.skip }}
+                            {{ form.split_group_id }}
+                            {{ form.is_split_child }}
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+
+            <div class="mb-2">
+                <small class="text-muted">
+                    For split rows, the sum of the split amounts should match the original transaction amount.
+                </small>
+            </div>
+
+            <button type="submit" class="btn btn-success">
+                Import Transactions
+            </button>
+
+            <a href="{% url 'import_transactions' %}" class="btn btn-secondary">
+                Start Over
+            </a>
+            <a href="{% url 'dashboard' %}" class="btn btn-outline-secondary">
+                Cancel
+            </a>
+        </form>
+
+        <script>
+            document.addEventListener("DOMContentLoaded", function () {
+                const tbody = document.querySelector("#import-table tbody");
+                const totalFormsInput = document.querySelector('input[name="form-TOTAL_FORMS"]');
+
+                function getFormIndexFromRow(row) {
+                    const anyField = row.querySelector("input[name^='form-'], select[name^='form-'], textarea[name^='form-']");
+                    if (!anyField) return null;
+                    const match = anyField.name.match(/^form-(\d+)-/);
+                    return match ? parseInt(match[1]) : null;
+                }
+
+                function updateCategoryVisibility(row) {
+                    const typeSelect = row.querySelector("select[name$='entry_type']");
+                    const expenseWrapper = row.querySelector(".expense-wrapper");
+                    const incomeWrapper = row.querySelector(".income-wrapper");
+                    if (!typeSelect || !expenseWrapper || !incomeWrapper) return;
+
+                    const isIncome = typeSelect.value === "income";
+                    if (isIncome) {
+                        expenseWrapper.style.display = "none";
+                        incomeWrapper.style.display = "";
+                    } else {
+                        expenseWrapper.style.display = "";
+                        incomeWrapper.style.display = "none";
+                    }
+                }
+
+                function getSplitGroupId(row) {
+                    const input = row.querySelector("input[name$='split_group_id']");
+                    return input ? input.value : "";
+                }
+
+                function setSplitGroupId(row, value) {
+                    const input = row.querySelector("input[name$='split_group_id']");
+                    if (input) input.value = value;
+                }
+
+                function markAsSplitChild(row, isChild) {
+                    const input = row.querySelector("input[name$='is_split_child']");
+                    if (input) {
+                        input.value = isChild ? "on" : "";
+                    }
+                }
+
+                function getAmountFromRow(row) {
+                    const amountInput = row.querySelector("input[name$='amount']");
+                    if (!amountInput) return 0;
+                    const val = parseFloat(amountInput.value.replace(",", "") || "0");
+                    return isNaN(val) ? 0 : val;
+                }
+
+                function setAmountInRow(row, val) {
+                    const amountInput = row.querySelector("input[name$='amount']");
+                    if (!amountInput) return;
+                    if (val === null || val === undefined) {
+                        amountInput.value = "";
+                    } else {
+                        amountInput.value = val.toFixed(2);
+                    }
+                }
+
+                function ensureWarningElement(row) {
+                    let warning = row.querySelector(".split-warning");
+                    if (!warning) {
+                        warning = document.createElement("div");
+                        warning.className = "split-warning text-danger small mt-1";
+                        const amountCell = row.querySelector("td:nth-child(4)");
+                        if (amountCell) amountCell.appendChild(warning);
+                    }
+                    return warning;
+                }
+
+                function clearWarning(row) {
+                    const warning = row.querySelector(".split-warning");
+                    if (warning) {
+                        warning.textContent = "";
+                    }
+                }
+
+                function updateSplitWarnings() {
+                    const rows = Array.from(document.querySelectorAll(".transaction-row"));
+                    const groups = {};
+
+                    rows.forEach(row => {
+                        const sgid = getSplitGroupId(row);
+                        if (!sgid) {
+                            clearWarning(row);
+                            return;
+                        }
+                        if (!groups[sgid]) groups[sgid] = [];
+                        groups[sgid].push(row);
+                    });
+
+                    Object.keys(groups).forEach(sgid => {
+                        const groupRows = groups[sgid];
+                        if (groupRows.length !== 2) {
+                            groupRows.forEach(clearWarning);
+                            return;
+                        }
+
+                        const originalAmount = parseFloat(groupRows[0].dataset.originalAmount || "0");
+                        const sum = getAmountFromRow(groupRows[0]) + getAmountFromRow(groupRows[1]);
+
+                        if (originalAmount > 0 && Math.abs(sum - originalAmount) > 0.005) {
+                            groupRows.forEach(row => {
+                                const warning = ensureWarningElement(row);
+                                warning.textContent = "Split amounts do not sum to original $" + originalAmount.toFixed(2);
+                            });
+                        } else {
+                            groupRows.forEach(clearWarning);
+                        }
+                    });
+                }
+
+                function applyRowColor(row) {
+                    const typeSelect = row.querySelector("select[name$='entry_type']");
+                    const expenseSelect = row.querySelector("select[name$='expense_category']");
+                    const incomeSelect = row.querySelector("select[name$='income_source']");
+
+                    const autoInitial = row.dataset.autoInitial === "1";
+                    const userChanged = row.dataset.userChanged === "1";
+
+                    let currentCat = "";
+
+                    if (typeSelect && typeSelect.value === "expense") {
+                        currentCat = expenseSelect ? (expenseSelect.value || "") : "";
+                    } else if (typeSelect && typeSelect.value === "income") {
+                        currentCat = incomeSelect ? (incomeSelect.value || "") : "";
+                    }
+
+                    row.classList.remove("row-auto", "row-uncat", "row-manual");
+
+                    if (!currentCat) {
+                        row.classList.add("row-uncat");
+                        return;
+                    }
+
+                    if (autoInitial && !userChanged) {
+                        row.classList.add("row-auto");
+                    } else {
+                        row.classList.add("row-manual");
+                    }
+                }
+
+                function reindexClonedRow(row, oldIndex, newIndex) {
+                    const elems = row.querySelectorAll("input, select, textarea, label");
+                    elems.forEach(el => {
+                        if (el.name && el.name.indexOf("form-" + oldIndex + "-") !== -1) {
+                            el.name = el.name.replace("form-" + oldIndex + "-", "form-" + newIndex + "-");
+                        }
+                        if (el.id && el.id.indexOf("id_form-" + oldIndex + "-") !== -1) {
+                            el.id = el.id.replace("id_form-" + oldIndex + "-", "id_form-" + newIndex + "-");
+                        }
+                        if (el.htmlFor && el.htmlFor.indexOf("id_form-" + oldIndex + "-") !== -1) {
+                            el.htmlFor = el.htmlFor.replace("id_form-" + oldIndex + "-", "id_form-" + newIndex + "-");
+                        }
+                    });
+                }
+
+                // helper to inject "Original / Split part" labels under the Vendor column
+                function addSplitLabel(row, text) {
+                    const vendorCell = row.querySelector("td:nth-child(3)");
+                    if (!vendorCell) return;
+
+                    let label = vendorCell.querySelector(".split-label");
+                    if (!label) {
+                        label = document.createElement("div");
+                        label.className = "split-label";
+                        vendorCell.appendChild(label);
+                    }
+                    label.textContent = text;
+                }
+
+                function initRow(row) {
+                    const typeSelect = row.querySelector("select[name$='entry_type']");
+                    const skipBtn = row.querySelector(".skip-btn");
+                    const skipInput = row.querySelector("input[name$='skip']");
+                    const splitBtn = row.querySelector(".split-btn");
+                    const amountInput = row.querySelector("input[name$='amount']");
+                    const expenseSelect = row.querySelector("select[name$='expense_category']");
+                    const incomeSelect = row.querySelector("select[name$='income_source']");
+
+                    if (typeSelect) {
+                        updateCategoryVisibility(row);
+                        typeSelect.addEventListener("change", function () {
+                            updateCategoryVisibility(row);
+                            row.dataset.userChanged = "1";
+                            applyRowColor(row);
+                        });
+                    }
+
+                    const markChangedAndRecolor = () => {
+                        row.dataset.userChanged = "1";
+                        applyRowColor(row);
+                    };
+
+                    if (expenseSelect) {
+                        expenseSelect.addEventListener("change", markChangedAndRecolor);
+                        expenseSelect.addEventListener("click", markChangedAndRecolor);
+                    }
+
+                    if (incomeSelect) {
+                        incomeSelect.addEventListener("change", markChangedAndRecolor);
+                        incomeSelect.addEventListener("click", markChangedAndRecolor);
+                    }
+
+                    if (skipBtn && skipInput) {
+                        skipBtn.addEventListener("click", () => {
+                            skipInput.value = "on";
+                            row.style.display = "none";
+                            updateSplitWarnings();
+                        });
+                    }
+
+                    if (splitBtn) {
+                        splitBtn.addEventListener("click", () => {
+                            splitRow(row);
+                        });
+                    }
+
+                    if (amountInput) {
+                        amountInput.addEventListener("input", () => {
+                            updateSplitWarnings();
+                        });
+                    }
+
+                    applyRowColor(row);
+                }
+
+                function splitRow(row) {
+                    if (!totalFormsInput) {
+                        alert("Formset management form not found; cannot split.");
+                        return;
+                    }
+                    const oldIndex = getFormIndexFromRow(row);
+                    if (oldIndex === null) {
+                        alert("Cannot determine row index for splitting.");
+                        return;
+                    }
+
+                    const originalAmount = getAmountFromRow(row);
+                    if (originalAmount <= 0) {
+                        alert("Cannot split a zero or invalid amount.");
+                        return;
+                    }
+
+                    const currentTotal = parseInt(totalFormsInput.value);
+                    const newIndex = currentTotal;
+                    totalFormsInput.value = currentTotal + 1;
+
+                    const clone = row.cloneNode(true);
+                    reindexClonedRow(clone, oldIndex, newIndex);
+
+                    if (row.nextSibling) {
+                        tbody.insertBefore(clone, row.nextSibling);
+                    } else {
+                        tbody.appendChild(clone);
+                    }
+
+                    let splitGroupId = getSplitGroupId(row);
+                    if (!splitGroupId) {
+                        splitGroupId = "grp-" + Date.now() + "-" + oldIndex;
+                        setSplitGroupId(row, splitGroupId);
+                    }
+                    setSplitGroupId(clone, splitGroupId);
+
+                    markAsSplitChild(row, false);
+                    markAsSplitChild(clone, true);
+
+                    const origDate = row.querySelector("input[name$='date']");
+                    const cloneDate = clone.querySelector("input[name$='date']");
+                    if (origDate && cloneDate) cloneDate.value = origDate.value;
+
+                    const origVendor = row.querySelector("input[name$='vendor_name']");
+                    const cloneVendor = clone.querySelector("input[name$='vendor_name']");
+                    if (origVendor && cloneVendor) cloneVendor.value = origVendor.value;
+
+                    const origType = row.querySelector("select[name$='entry_type']");
+                    const cloneType = clone.querySelector("select[name$='entry_type']");
+                    if (origType && cloneType) cloneType.value = origType.value;
+
+                    const origLocation = row.querySelector("input[name$='location']");
+                    const cloneLocation = clone.querySelector("input[name$='location']");
+                    if (origLocation && cloneLocation) cloneLocation.value = origLocation.value;
+
+                    const cloneExpenseCat = clone.querySelector("select[name$='expense_category']");
+                    const cloneIncomeSource = clone.querySelector("select[name$='income_source']");
+                    const cloneNotes = clone.querySelector("textarea[name$='notes']");
+                    if (cloneExpenseCat) cloneExpenseCat.value = "";
+                    if (cloneIncomeSource) cloneIncomeSource.value = "";
+                    if (cloneNotes) cloneNotes.value = "";
+
+                    setAmountInRow(row, originalAmount);
+                    setAmountInRow(clone, 0);
+
+                    row.dataset.originalAmount = originalAmount.toFixed(2);
+                    clone.dataset.originalAmount = originalAmount.toFixed(2);
+
+                    const cloneSkip = clone.querySelector("input[name$='skip']");
+                    if (cloneSkip) cloneSkip.value = "";
+
+                    // cloned row is not auto-initial; starts as uncategorized until user sets it
+                    clone.dataset.autoInitial = "0";
+                    clone.dataset.userChanged = "0";
+
+                    // New styling and labels
+                    row.classList.add("split-original");
+                    clone.classList.add("split-child");
+                    addSplitLabel(row, "Original (split group)");
+                    addSplitLabel(clone, "Split part");
+
+                    initRow(clone);
+                    updateCategoryVisibility(clone);
+                    applyRowColor(row);
+                    applyRowColor(clone);
+                    updateSplitWarnings();
+
+                    // focus the amount field in the new split row
+                    const cloneAmount = clone.querySelector("input[name$='amount']");
+                    if (cloneAmount) {
+                        cloneAmount.focus();
+                        cloneAmount.select();
+                    }
+                }
+
+                const rows = document.querySelectorAll(".transaction-row");
+                rows.forEach(row => {
+                    initRow(row);
+                });
+
+                updateSplitWarnings();
+            });
+        </script>
+
+    {% endif %}
+
+</div>
+</body>
+</html>
