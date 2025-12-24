@@ -1,86 +1,290 @@
 {% extends 'base.html' %}
+{% load humanize %}
 
 {% block content %}
 <div class="container mt-4">
-  <h2>Bank Accounts</h2>
-  <p class="text-muted">Define the bank / credit card accounts you import transactions from.</p>
+  <h2>Accounts Overview</h2>
+  <p class="text-muted">
+    All bank / credit card / investment accounts you track.
+    Add new accounts here and click any row to edit or delete.
+  </p>
 
-  <div class="row">
-    <div class="col-md-7">
-      <table class="table table-striped align-middle">
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Institution</th>
-            <th>Last 4</th>
-            <th>Active</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for account in accounts %}
-            <tr>
-              <td>{{ account.name }}</td>
-              <td>{{ account.institution }}</td>
-              <td>{{ account.account_number_last4 }}</td>
-              <td>{{ account.is_active|yesno:"Yes,No" }}</td>
-              <td class="text-end">
-                <form method="post" class="d-inline">
-                  {% csrf_token %}
-                  <input type="hidden" name="delete" value="{{ account.id }}">
-                  <button type="submit" class="btn btn-sm btn-outline-danger"
-                          onclick="return confirm('Delete this account?');">
-                    Delete
-                  </button>
-                </form>
-              </td>
-            </tr>
-          {% empty %}
-            <tr>
-              <td colspan="5" class="text-muted">No bank accounts defined yet.</td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
+  <!-- Add Account (top card) -->
+  <div class="card border-0 shadow-sm mb-4">
+    <div class="card-body">
+      <h5 class="card-title mb-3">Add Account</h5>
+      <form method="post">
+        {% csrf_token %}
+        {{ form.non_field_errors }}
 
-    <div class="col-md-5">
-      <div class="card border-0 shadow-sm">
-        <div class="card-body">
-          <h5 class="card-title mb-3">Add / Edit Account</h5>
-          <form method="post">
-            {% csrf_token %}
-            {{ form.non_field_errors }}
+        <!-- no account_id here => treated as "add" in the view -->
+        <input type="hidden" name="account_id" value="">
 
-            <input type="hidden" name="account_id" id="account_id">
+        <div class="row g-3">
+          <div class="col-md-4">
+            <label class="form-label" for="id_name">Name</label>
+            {{ form.name }}
+          </div>
 
-            <div class="mb-2">
-              <label class="form-label" for="id_name">Name</label>
-              {{ form.name }}
+          <div class="col-md-4">
+            <label class="form-label" for="id_institution">Institution</label>
+            {{ form.institution }}
+          </div>
+
+          <div class="col-md-4">
+            <label class="form-label" for="id_account_type">Account type</label>
+            {{ form.account_type }}
+          </div>
+
+          <div class="col-md-2">
+            <label class="form-label" for="id_account_number_last4">Last 4 digits</label>
+            {{ form.account_number_last4 }}
+          </div>
+
+          <div class="col-md-3 d-flex align-items-center">
+            <div class="form-check mt-3">
+              {{ form.is_withholding_account }}
+              <label class="form-check-label" for="id_is_withholding_account">
+                Withholding account
+              </label>
             </div>
+          </div>
 
-            <div class="mb-2">
-              <label class="form-label" for="id_institution">Institution</label>
-              {{ form.institution }}
+          <div class="col-md-3">
+            <label class="form-label" for="id_current_balance">Current balance</label>
+            {{ form.current_balance }}
+            <div class="form-text">
+              Will set “Balance last updated” to today.
             </div>
+          </div>
 
-            <div class="mb-2">
-              <label class="form-label" for="id_account_number_last4">Last 4 digits</label>
-              {{ form.account_number_last4 }}
-            </div>
-
-            <div class="form-check mb-3">
+          <div class="col-md-2 d-flex align-items-center">
+            <div class="form-check mt-3">
               {{ form.is_active }}
               <label class="form-check-label" for="id_is_active">
                 Active
               </label>
             </div>
+          </div>
 
-            <button type="submit" class="btn btn-primary">Save</button>
-          </form>
+          <div class="col-md-2 d-flex align-items-end justify-content-end">
+            <button type="submit" class="btn btn-primary">
+              Add account
+            </button>
+          </div>
         </div>
-      </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Accounts table -->
+  <div class="row">
+    <div class="col-12">
+      <table class="table table-striped align-middle">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Institution</th>
+            <th>Type</th>
+            <th>Last 4</th>
+            <th>Withholding?</th>
+            <th class="text-end">Current balance</th>
+            <th>Last updated</th>
+            <th class="text-end">Available (if withholding)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for account in accounts %}
+            <tr style="cursor: pointer;"
+                onclick="openAccountModal(
+                  '{{ account.id }}',
+                  '{{ account.name|escapejs }}',
+                  '{{ account.institution|default_if_none:''|escapejs }}',
+                  '{{ account.account_type }}',
+                  '{{ account.account_number_last4|default_if_none:''|escapejs }}',
+                  '{{ account.is_withholding_account|yesno:"true,false" }}',
+                  '{{ account.current_balance }}',
+                  '{{ account.is_active|yesno:"true,false" }}'
+                )">
+              <td>{{ account.name }}</td>
+              <td>{{ account.institution }}</td>
+              <td>{{ account.get_account_type_display }}</td>
+              <td>{{ account.account_number_last4 }}</td>
+              <td>
+                {% if account.is_withholding_account %}
+                  <span class="badge bg-info text-dark">Withholding</span>
+                {% else %}
+                  No
+                {% endif %}
+              </td>
+              <td class="text-end">
+                {% if account.current_balance %}
+                  ${{ account.current_balance|floatformat:2|intcomma }}
+                {% else %}
+                  $0.00
+                {% endif %}
+              </td>
+              <td>
+                {% if account.last_updated %}
+                  {{ account.last_updated }}
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+              <td class="text-end">
+                {% if account.is_withholding_account %}
+                  ${{ account.unallocated_balance|floatformat:2|intcomma }}
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+            </tr>
+          {% empty %}
+            <tr>
+              <td colspan="8" class="text-muted">
+                No bank accounts defined yet.
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <p class="text-muted small mb-0">
+        Tip: click any row to edit or delete that account.
+      </p>
     </div>
   </div>
 </div>
+
+<!-- Modal Backdrop -->
+<div id="accountModalBackdrop" style="
+  display: none;
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0,0,0,0.5);
+  z-index: 1040;
+"></div>
+
+<!-- Edit Account Modal -->
+<div id="editAccountModal" style="
+  display: none;
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+  z-index: 1050;
+  width: 650px;
+  max-width: 95%;
+">
+  <h4 class="mb-3">Edit Account</h4>
+  <form method="post">
+    {% csrf_token %}
+    <input type="hidden" name="account_id" id="edit-account-id">
+
+    <div class="container-fluid">
+      <div class="row mb-2">
+        <div class="col-md-6">
+          <label class="form-label" for="edit-account-name">Name</label>
+          <input type="text" class="form-control" name="name" id="edit-account-name" required>
+        </div>
+        <div class="col-md-6">
+          <label class="form-label" for="edit-account-institution">Institution</label>
+          <input type="text" class="form-control" name="institution" id="edit-account-institution">
+        </div>
+      </div>
+
+      <div class="row mb-2">
+        <div class="col-md-4">
+          <label class="form-label" for="edit-account-type">Account type</label>
+          <select class="form-select" name="account_type" id="edit-account-type" required>
+            <option value="CHEQUING">Chequing</option>
+            <option value="CREDIT_CARD">Credit card</option>
+            <option value="SAVINGS">Savings</option>
+            <option value="TFSA">TFSA</option>
+            <option value="RETIREMENT">Retirement (RRSP, etc.)</option>
+            <option value="OTHER">Other</option>
+          </select>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label" for="edit-account-last4">Last 4 digits</label>
+          <input type="text" class="form-control" name="account_number_last4" id="edit-account-last4" maxlength="4">
+        </div>
+        <div class="col-md-4 d-flex align-items-center">
+          <div class="form-check mt-3">
+            <input class="form-check-input" type="checkbox" name="is_withholding_account" id="edit-account-withholding">
+            <label class="form-check-label" for="edit-account-withholding">
+              Withholding account
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="row mb-2">
+        <div class="col-md-4">
+          <label class="form-label" for="edit-account-balance">Current balance</label>
+          <input type="number" step="0.01" class="form-control" name="current_balance" id="edit-account-balance">
+          <div class="form-text">
+            “Balance last updated” will be set to today.
+          </div>
+        </div>
+        <div class="col-md-4 d-flex align-items-center">
+          <div class="form-check mt-3">
+            <input class="form-check-input" type="checkbox" name="is_active" id="edit-account-active">
+            <label class="form-check-label" for="edit-account-active">
+              Active
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="text-end mt-3">
+        <button type="submit" name="save_account" value="1" class="btn btn-primary me-2">
+          Save changes
+        </button>
+        <button type="submit" name="delete_account" value="1" class="btn btn-danger me-2"
+                onclick="return confirm('Delete this account?');">
+          Delete
+        </button>
+        <button type="button" class="btn btn-secondary" onclick="closeAccountModal()">
+          Cancel
+        </button>
+      </div>
+    </div>
+  </form>
+</div>
+
+<script>
+  function openAccountModal(id, name, institution, accountType, last4, isWithholding, balance, isActive) {
+    document.getElementById('edit-account-id').value = id;
+    document.getElementById('edit-account-name').value = name || '';
+    document.getElementById('edit-account-institution').value = institution || '';
+    document.getElementById('edit-account-type').value = accountType || 'CHEQUING';
+    document.getElementById('edit-account-last4').value = last4 || '';
+    document.getElementById('edit-account-balance').value = balance || '';
+
+    document.getElementById('edit-account-withholding').checked = (isWithholding === 'true');
+    document.getElementById('edit-account-active').checked = (isActive === 'true');
+
+    document.getElementById('accountModalBackdrop').style.display = 'block';
+    document.getElementById('editAccountModal').style.display = 'block';
+  }
+
+  function closeAccountModal() {
+    document.getElementById('accountModalBackdrop').style.display = 'none';
+    document.getElementById('editAccountModal').style.display = 'none';
+  }
+
+  // Click backdrop to close
+  document.getElementById('accountModalBackdrop').addEventListener('click', closeAccountModal);
+
+  // ESC key to close
+  document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape') {
+      closeAccountModal();
+    }
+  });
+</script>
 {% endblock %}

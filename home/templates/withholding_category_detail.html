@@ -1,0 +1,185 @@
+{% extends 'base.html' %}
+{% load finance_filters %}
+
+{% block content %}
+<div class="container mt-4">
+
+  <a href="{% url 'withholding_overview' %}" class="text-decoration-none mb-3 d-inline-block">
+    &larr; Back to withholding overview
+  </a>
+
+  <h1 class="h3 mb-2">{{ category.name }}</h1>
+  <div class="text-muted mb-4">
+    Account:
+    {% if category.account %}
+      {{ category.account.name }}
+    {% else %}
+      (none)
+    {% endif %}
+    <br>
+    Current balance: <strong>{{ category.balance|currency }}</strong><br>
+    Target:
+    {% if category.target_amount %}
+      {{ category.target_amount|currency }}
+    {% else %}
+      <span class="text-muted">Not set</span>
+    {% endif %}<br>
+    Next due:
+    {% if category.next_due_date %}
+      {{ category.next_due_date }}
+    {% else %}
+      <span class="text-muted">Not set</span>
+    {% endif %}
+  </div>
+
+  <h2 class="h5">Transactions</h2>
+
+  {% if rows %}
+    <table class="table table-sm table-striped align-middle">
+      <thead>
+        <tr>
+          <th style="width: 110px;">Date</th>
+          <th>Note</th>
+          <th class="text-end" style="width: 120px;">Amount</th>
+          <th class="text-end" style="width: 140px;">Balance after</th>
+          <th style="width: 80px;"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+          <tr>
+            <td>{{ row.tx.date }}</td>
+            <td>{{ row.tx.note }}</td>
+            <td class="text-end">
+              {% if row.tx.amount >= 0 %}
+                +{{ row.tx.amount|currency }}
+              {% else %}
+                -{{ row.tx.amount|negate|currency }}
+              {% endif %}
+            </td>
+            <td class="text-end">
+              {{ row.balance_after|currency }}
+            </td>
+            <td class="text-end">
+              <button
+                type="button"
+                class="btn btn-link p-0 btn-sm"
+                style="font-size: 0.85rem;"
+                data-tx-id="{{ row.tx.id }}"
+                data-tx-date="{{ row.tx.date|date:'Y-m-d' }}"
+                data-tx-amount="{{ row.tx.amount }}"
+                data-tx-note="{{ row.tx.note|escapejs }}"
+              >
+                Edit
+              </button>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p>No transactions recorded for this bucket yet.</p>
+  {% endif %}
+</div>
+
+<!-- Backdrop -->
+<div id="modalBackdrop" style="
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.5);
+  z-index: 999;
+"></div>
+
+<!-- Edit Withholding Transaction Modal -->
+<div id="editWithholdingModal" style="
+  display: none;
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+  z-index: 1000;
+  width: 500px;
+  max-width: 90%;
+">
+  <h3 class="mb-3">Edit Withholding Transaction</h3>
+  <form method="post" id="edit-withholding-form">
+    {% csrf_token %}
+    <div class="mb-2">
+      <label for="edit-date" class="form-label mb-1">Date:</label>
+      <input type="date" id="edit-date" name="date" class="form-control form-control-sm" required>
+    </div>
+    <div class="mb-2">
+      <label for="edit-amount" class="form-label mb-1">Amount:</label>
+      <input type="number" step="0.01" id="edit-amount" name="amount"
+             class="form-control form-control-sm" required>
+    </div>
+    <div class="mb-3">
+      <label for="edit-note" class="form-label mb-1">Note:</label>
+      <input type="text" id="edit-note" name="note" class="form-control form-control-sm">
+    </div>
+
+    <div class="text-end mt-3">
+      <button type="submit" class="btn btn-primary btn-sm me-2">Save</button>
+      <button
+        type="submit"
+        name="delete_withholding"
+        value="1"
+        class="btn btn-danger btn-sm me-2"
+        onclick="return confirm('Delete this transaction?');"
+      >Delete</button>
+      <button type="button" class="btn btn-secondary btn-sm" onclick="closeWithholdingModal()">Cancel</button>
+    </div>
+  </form>
+</div>
+
+<script>
+  const backdrop = document.getElementById('modalBackdrop');
+  const modal = document.getElementById('editWithholdingModal');
+  const form = document.getElementById('edit-withholding-form');
+
+  function openWithholdingModal(txId, dateStr, amount, note) {
+    const url = "{% url 'update_withholding_transaction' 0 %}".replace("/0/", "/" + txId + "/");
+    form.action = url;
+
+    document.getElementById('edit-date').value = dateStr;
+    document.getElementById('edit-amount').value = amount;
+    document.getElementById('edit-note').value = note || "";
+
+    backdrop.style.display = 'block';
+    modal.style.display = 'block';
+  }
+
+  function closeWithholdingModal() {
+    backdrop.style.display = 'none';
+    modal.style.display = 'none';
+  }
+
+  document.querySelectorAll('.btn-link[data-tx-id]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const txId = btn.dataset.txId;
+      const dateStr = btn.dataset.txDate;
+      const amount = btn.dataset.txAmount;
+      const note = btn.dataset.txNote;
+      openWithholdingModal(txId, dateStr, amount, note);
+    });
+  });
+
+  backdrop.addEventListener('click', () => {
+    closeWithholdingModal();
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      closeWithholdingModal();
+    }
+  });
+</script>
+{% endblock %}

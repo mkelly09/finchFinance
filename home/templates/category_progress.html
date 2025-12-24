@@ -1,49 +1,132 @@
 {% extends "base.html" %}
+{% load humanize %}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-4">
-  <h2>Category Spending Progress</h2>
-  <form method="get" class="row g-2 align-items-center">
-    <div class="col-auto">
-      <label for="month" class="col-form-label">Month:</label>
+<div class="container mt-4">
+  <div class="row align-items-end mb-3">
+    <div class="col-lg-8">
+      <h2>Category Progress — {{ selected_month_display }}</h2>
+      <p class="text-muted mb-0">
+        Income progress shows received vs expected (monthly target). Expense progress shows spent vs monthly limit.
+        Click a category to drill into recent transactions.
+      </p>
     </div>
-    <div class="col-auto">
-      <input type="month" id="month" name="month" class="form-control"
-             value="{{ selected_month }}">
-    </div>
-    <div class="col-auto">
-      <button type="submit" class="btn btn-primary">Go</button>
-    </div>
-  </form>
-</div>
-
-{% if category_summaries %}
-  <div class="row justify-content-center">
-    <div class="col-md-4">
-      {% for cat in category_summaries %}
-        <a href="{% url 'category_expense_list' cat.name %}?month={{ selected_month }}"
-           class="text-decoration-none text-reset">
-          <div class="mb-3 border rounded p-3 hover-shadow" style="transition: box-shadow 0.2s;">
-            <div class="d-flex justify-content-between small mb-2">
-              <strong>{{ cat.name }}</strong>
-              <span>${{ cat.spent|floatformat:2 }} / ${{ cat.target|floatformat:2 }} ({{ cat.percent_used }}%)</span>
-            </div>
-            <div class="progress" style="height: 20px;">
-              <div class="progress-bar {{ cat.bar_class }}"
-                   role="progressbar"
-                   style="width: {{ cat.percent_used }}%;"
-                   aria-valuenow="{{ cat.percent_used }}"
-                   aria-valuemin="0"
-                   aria-valuemax="100">
-                {{ cat.percent_used }}%
-              </div>
-            </div>
-          </div>
-        </a>
-      {% endfor %}
+    <div class="col-lg-4 mt-3 mt-lg-0">
+      <form method="get" class="row g-2 align-items-end">
+        <div class="col-12">
+          <label for="month" class="form-label">Select Month:</label>
+          <input type="month" name="month" id="month" class="form-control" value="{{ selected_month }}">
+        </div>
+        <div class="col-12">
+          <button type="submit" class="btn btn-primary w-100">Go</button>
+        </div>
+      </form>
     </div>
   </div>
-{% else %}
-  <p>No data available for this month.</p>
-{% endif %}
+
+  <div class="row g-4">
+    <!-- INCOME -->
+    <div class="col-lg-6">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h4 class="card-title mb-3">Income</h4>
+
+          {% if income_summaries %}
+            {% for item in income_summaries %}
+              <div class="mb-3">
+                <div class="d-flex justify-content-between">
+                  <div>
+                    <strong>
+                      <a href="{% url 'income_category_income_list' item.id %}?month={{ selected_month }}" class="text-decoration-none">
+                        {{ item.name }}
+                      </a>
+                    </strong>
+                  </div>
+                  <div class="text-muted">
+                    ${{ item.actual|floatformat:2|intcomma }}
+                    {% if item.target and item.target > 0 %}
+                      / ${{ item.target|floatformat:2|intcomma }}
+                    {% else %}
+                      / <span class="text-muted">No target</span>
+                    {% endif %}
+                  </div>
+                </div>
+
+                <div class="progress" style="height: 14px;">
+                  <div
+                    class="progress-bar {{ item.bar_class }}"
+                    role="progressbar"
+                    style="width: {% if item.percent > 140 %}140{% else %}{{ item.percent }}{% endif %}%"
+                    aria-valuenow="{{ item.percent }}"
+                    aria-valuemin="0"
+                    aria-valuemax="100"
+                  ></div>
+                </div>
+
+                <div class="small text-muted mt-1">
+                  {% if item.target and item.target > 0 %}
+                    {{ item.percent }}% of target
+                  {% else %}
+                    No target set
+                  {% endif %}
+                </div>
+              </div>
+            {% endfor %}
+          {% else %}
+            <p class="text-muted mb-0">No income categories found.</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <!-- EXPENSE -->
+    <div class="col-lg-6">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h4 class="card-title mb-3">Expenses</h4>
+
+          {% if expense_summaries %}
+            {% for item in expense_summaries %}
+              <div class="mb-3">
+                <div class="d-flex justify-content-between">
+                  <div>
+                    <strong>
+                      <a href="{% url 'category_expense_list' item.name %}?month={{ selected_month }}" class="text-decoration-none">
+                        {{ item.name }}
+                      </a>
+                    </strong>
+                  </div>
+                  <div class="text-muted">
+                    ${{ item.actual|floatformat:2|intcomma }} / ${{ item.target|floatformat:2|intcomma }}
+                  </div>
+                </div>
+
+                <div class="progress" style="height: 14px;">
+                  <div
+                    class="progress-bar {{ item.bar_class }}"
+                    role="progressbar"
+                    style="width: {% if item.percent > 140 %}140{% else %}{{ item.percent }}{% endif %}%"
+                    aria-valuenow="{{ item.percent }}"
+                    aria-valuemin="0"
+                    aria-valuemax="100"
+                  ></div>
+                </div>
+
+                <div class="small text-muted mt-1">
+                  {{ item.percent }}% of limit
+                </div>
+              </div>
+            {% endfor %}
+          {% else %}
+            <p class="text-muted mb-0">No expense categories with monthly limits found.</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mt-4">
+    <a class="btn btn-outline-secondary" href="/?month={{ selected_month }}">← Back to Dashboard</a>
+  </div>
+</div>
 {% endblock %}

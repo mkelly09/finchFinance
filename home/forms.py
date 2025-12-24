@@ -1,5 +1,6 @@
 from django import forms
-from .models import Expense, Income, Category, BankAccount
+from .models import Expense, Income, Category, IncomeCategory, BankAccount, WithholdingCategory
+
 
 
 class TransactionForm(forms.Form):
@@ -8,33 +9,66 @@ class TransactionForm(forms.Form):
         ('income', 'Income'),
     ]
 
-    INCOME_SOURCE_CHOICES = [
-        ('Arnprior Rental Income (MAIN)', 'Arnprior Rental Income (MAIN)'),
-        ('Arnprior Rental Income (LOFT)', 'Arnprior Rental Income (LOFT)'),
-        ('Employment Income', 'Employment Income'),
-        ('Investment Income', 'Investment Income'),
-    ]
+
 
     entry_type = forms.ChoiceField(choices=ENTRY_TYPE_CHOICES, initial='expense')
     date = forms.DateField(widget=forms.widgets.DateInput(attrs={'type': 'date'}))
     amount = forms.DecimalField()
     vendor_name = forms.CharField(required=False)
     category = forms.ModelChoiceField(queryset=Category.objects.none(), required=False)
-    source = forms.ChoiceField(choices=INCOME_SOURCE_CHOICES, required=False)
+    source = forms.ModelChoiceField(
+        queryset=IncomeCategory.objects.all().order_by("name"),
+        required=False,
+        empty_label="(Select income category)",
+    )
+
     taxable = forms.BooleanField(required=False, initial=True)
     location = forms.CharField(required=False, initial='Ottawa')
     notes = forms.CharField(widget=forms.Textarea(attrs={'rows': 2}), required=False)
+
+    # NEW: link an expense to a withholding bucket (contribution)
+    apply_to_withholding = forms.BooleanField(
+        required=False,
+        initial=False,
+        help_text="Also add this amount to a withholding bucket.",
+    )
+    withholding_category = forms.ModelChoiceField(
+        queryset=WithholdingCategory.objects.none(),
+        required=False,
+        empty_label="(Select withholding bucket)",
+    )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         self.fields['category'].queryset = Category.objects.all()
 
+        # Only show buckets that belong to withholding accounts
+        self.fields['withholding_category'].queryset = (
+            WithholdingCategory.objects
+            .select_related("account")
+            .order_by("account__name", "name")
+        )
+
         # Do NOT hide the fields server-side; let JS toggle visibility
-        entry_type_value = self.data.get('entry_type') or self.initial.get('entry_type') or 'expense'
+        entry_type_value = (
+            self.data.get('entry_type')
+            or self.initial.get('entry_type')
+            or 'expense'
+        )
         selected_source = self.data.get('source') or self.initial.get('source')
 
-        self.fields['taxable'].initial = (selected_source != 'Employment Income')
+        # Default taxable behaviour comes from IncomeCategory.taxable_default
+        taxable_default = True
+        if selected_source:
+            try:
+                # selected_source will be a pk string in POST data
+                cat_obj = IncomeCategory.objects.get(pk=selected_source)
+                taxable_default = cat_obj.taxable_default
+            except Exception:
+                taxable_default = True
+
+        self.fields["taxable"].initial = taxable_default
 
 
 class CSVUploadForm(forms.Form):
@@ -59,6 +93,12 @@ class TransactionImportForm(forms.Form):
     - skip: internal flag so a row can be 'deleted' in the UI and ignored on save
     - split_group_id: ID so multiple rows can represent parts of one original transaction
     - is_split_child: marker to indicate a row was created by splitting
+
+    NEW:
+    - apply_to_withholding: treat this expense as a contribution into a withholding bucket
+    - is_withholding_payout: treat this row as a payout from withholding ONLY
+                             (no Expense will be created)
+    - withholding_category: which withholding bucket to adjust
     """
     ENTRY_TYPE_CHOICES = [
         ("expense", "Expense"),
@@ -109,10 +149,11 @@ class TransactionImportForm(forms.Form):
         widget=forms.Select(attrs={"class": "form-select"}),
     )
 
-    # Income side: one of the 4 sources from Income model
-    income_source = forms.ChoiceField(
-        choices=[("", "(Select income source)")] + list(Income.CATEGORY_CHOICES),
+
+    income_source = forms.ModelChoiceField(
+        queryset=IncomeCategory.objects.all().order_by("name"),
         required=False,
+        empty_label="(Select income category)",
         widget=forms.Select(attrs={"class": "form-select"}),
     )
 
@@ -129,6 +170,26 @@ class TransactionImportForm(forms.Form):
             "rows": 1,
             "class": "form-control",
         }),
+    )
+
+    # NEW withholding fields
+    apply_to_withholding = forms.BooleanField(
+        required=False,
+        label="Contribution",
+        help_text="Also add this amount into a withholding bucket.",
+    )
+    is_withholding_payout = forms.BooleanField(
+        required=False,
+        label="Payout (no expense)",
+        help_text="Treat this as using funds from a withholding bucket only.",
+    )
+    withholding_category = forms.ModelChoiceField(
+        queryset=WithholdingCategory.objects.select_related("account")
+        .all()
+        .order_by("account__name", "name"),
+        required=False,
+        empty_label="(Choose withholding bucket)",
+        widget=forms.Select(attrs={"class": "form-select"}),
     )
 
     def clean(self):
@@ -148,9 +209,37 @@ class TransactionImportForm(forms.Form):
         expense_category = cleaned.get("expense_category")
         income_source = cleaned.get("income_source")
 
-        if entry_type == "expense" and not expense_category:
-            self.add_error("expense_category", "Please select an expense category.")
-        if entry_type == "income" and not income_source:
-            self.add_error("income_source", "Please select an income source.")
+        apply_to_withholding = cleaned.get("apply_to_withholding")
+        is_withholding_payout = cleaned.get("is_withholding_payout")
+        withholding_category = cleaned.get("withholding_category")
+
+        # Expense vs income validations
+        if entry_type == "expense":
+            # For payout-only rows we do NOT require an expense_category
+            if not is_withholding_payout and not expense_category:
+                self.add_error("expense_category", "Please select an expense category.")
+        elif entry_type == "income":
+            if not income_source:
+                self.add_error("income_source", "Please select an income source.")
+
+            # For now we don't support withholding adjustments on income rows
+            if apply_to_withholding or is_withholding_payout:
+                self.add_error(
+                    "entry_type",
+                    "Withholding adjustments are only supported on expense rows.",
+                )
+
+        # Withholding-specific validations
+        if (apply_to_withholding or is_withholding_payout) and not withholding_category:
+            self.add_error(
+                "withholding_category",
+                "Select a withholding bucket when adjusting withholding.",
+            )
+
+        if apply_to_withholding and is_withholding_payout:
+            self.add_error(
+                "is_withholding_payout",
+                "Choose either a contribution OR a payout, not both.",
+            )
 
         return cleaned

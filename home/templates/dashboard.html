@@ -4,28 +4,79 @@
 
 {% block content %}
 <div class="container mt-4">
-  <!-- Summary -->
-  <div class="row mb-4">
-    <div class="col">
+  <!-- Summary + Month Selector in same row -->
+  <div class="row mb-4 align-items-end">
+    <div class="col-lg-8 mb-3 mb-lg-0">
       <h2>Summary for {{ selected_month_display }}</h2>
       <p><strong>Total Income:</strong> ${{ total_income|floatformat:2|intcomma }}</p>
       <p><strong>Total Expenses:</strong> ${{ total_expenses|floatformat:2|intcomma }}</p>
       <p><strong>Net Savings:</strong> ${{ net_savings|floatformat:2|intcomma }}</p>
     </div>
+    <div class="col-lg-4">
+      <form method="get" class="row g-2 align-items-end">
+        <div class="col-12">
+          <label for="month" class="form-label">Select Month:</label>
+          <input type="month" name="month" id="month" class="form-control" value="{{ selected_month }}">
+        </div>
+        <div class="col-12">
+          <button type="submit" class="btn btn-primary w-100">Go</button>
+        </div>
+      </form>
+    </div>
   </div>
 
-  <!-- Month Selector -->
+  <!-- Accounts Overview -->
+  {% if accounts %}
   <div class="row mb-4">
-    <form method="get" class="row g-2 align-items-end">
-      <div class="col-auto">
-        <label for="month" class="form-label">Select Month:</label>
-        <input type="month" name="month" id="month" class="form-control" value="{{ selected_month }}">
+    <div class="col">
+      <h3>Accounts Overview</h3>
+      <div class="table-responsive">
+        <table class="table table-sm table-striped align-middle">
+          <thead class="table-light">
+            <tr>
+              <th>Account</th>
+              <th>Type</th>
+              <th>Withholding?</th>
+              <th class="text-end">Current Balance</th>
+              <th class="text-end">Unallocated (if withholding)</th>
+              <th>Last Updated</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for account in accounts %}
+              <tr>
+                <td>{{ account.name }}</td>
+                <td>{{ account.get_account_type_display }}</td>
+                <td>{{ account.is_withholding_account|yesno:"Yes,No" }}</td>
+                <td class="text-end">
+                  ${{ account.current_balance|floatformat:2|intcomma }}
+                </td>
+                <td class="text-end">
+                  {% if account.is_withholding_account %}
+                    ${{ account.unallocated_balance|floatformat:2|intcomma }}
+                  {% else %}
+                    <span class="text-muted">—</span>
+                  {% endif %}
+                </td>
+                <td>
+                  {% if account.last_updated %}
+                    {{ account.last_updated|date:"Y-m-d" }}
+                  {% else %}
+                    <span class="text-muted">—</span>
+                  {% endif %}
+                </td>
+              </tr>
+            {% empty %}
+              <tr>
+                <td colspan="6" class="text-muted">No accounts defined yet.</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
       </div>
-      <div class="col-auto">
-        <button type="submit" class="btn btn-primary">Go</button>
-      </div>
-    </form>
+    </div>
   </div>
+  {% endif %}
 
   <!-- Add Transaction -->
   <div class="row mb-4">
@@ -53,13 +104,30 @@
         <label for="id_category">Category:</label>
         {{ form.category|add_class:"form-select" }}
       </div>
+
+      <!-- withholding contribution controls for manual expenses -->
+      <div class="col-auto expense-field">
+        <div class="form-check mt-4">
+          {{ form.apply_to_withholding|add_class:"form-check-input" }}
+          <label class="form-check-label" for="id_apply_to_withholding">
+            Apply to withholding
+          </label>
+        </div>
+      </div>
+      <div class="col-auto expense-field">
+        <label for="id_withholding_category">Bucket:</label>
+        {{ form.withholding_category|add_class:"form-select" }}
+      </div>
+
       <div class="col-auto expense-field">
         <label for="id_location">Location:</label>
         {{ form.location|add_class:"form-control" }}
       </div>
+
       <div class="col-auto income-field">
         <label for="id_source">Source:</label>
-        {{ form.source|add_class:"form-control" }}
+        <!-- source is now a ModelChoiceField(IncomeCategory), so render as select -->
+        {{ form.source|add_class:"form-select" }}
       </div>
       <div class="col-auto income-field form-check mt-2">
         {{ form.taxable|add_class:"form-check-input" }}
@@ -87,32 +155,12 @@
       });
     }
 
-    function updateTaxableDefault() {
-      const sourceField = document.getElementById("id_source");
-      const taxableCheckbox = document.getElementById("id_taxable");
-      if (!sourceField || !taxableCheckbox) return;
-
-      const selected = sourceField.value;
-      if (selected === "Employment Income") {
-        taxableCheckbox.checked = false;
-      } else {
-        taxableCheckbox.checked = true;
-      }
-    }
-
     document.addEventListener("DOMContentLoaded", () => {
       document.getElementById("id_entry_type").addEventListener("change", () => {
         toggleFields();
-        updateTaxableDefault();
       });
 
-      const sourceField = document.getElementById("id_source");
-      if (sourceField) {
-        sourceField.addEventListener("change", updateTaxableDefault);
-      }
-
       toggleFields();
-      updateTaxableDefault();
     });
   </script>
 
@@ -135,13 +183,19 @@
           <tr onclick="openIncomeEditModal(
             '{{ income.id }}',
             '{{ income.date|date:"Y-m-d" }}',
-            '{{ income.category|escapejs }}',
+            '{{ income.income_category.id|default_if_none:"" }}',
             '{{ income.amount }}',
             '{{ income.taxable }}',
             '{{ income.notes|escapejs }}'
           )" style="cursor: pointer;">
             <td>{{ income.date }}</td>
-            <td>{{ income.category }}</td>
+            <td>
+              {% if income.income_category %}
+                {{ income.income_category.name }}
+              {% else %}
+                {{ income.category }}
+              {% endif %}
+            </td>
             <td>
               {% if income.bank_account %}
                 {{ income.bank_account.name }}
@@ -384,7 +438,11 @@
         </div>
         <div class="col-6">
           <label for="edit-income-source" class="form-label">Source:</label>
-          <input type="text" class="form-control" name="source" id="edit-income-source" required />
+          <select class="form-select" name="source" id="edit-income-source" required>
+            {% for c in income_categories %}
+              <option value="{{ c.id }}">{{ c.name }}</option>
+            {% endfor %}
+          </select>
         </div>
       </div>
 
@@ -449,10 +507,10 @@ document.addEventListener('keydown', function(event) {
   }
 });
 
-function openIncomeEditModal(id, date, source, amount, taxable, notes) {
+function openIncomeEditModal(id, date, sourceId, amount, taxable, notes) {
   document.getElementById("edit-income-id").value = id;
   document.getElementById("edit-income-date").value = date;
-  document.getElementById("edit-income-source").value = source;
+  document.getElementById("edit-income-source").value = sourceId;
   document.getElementById("edit-income-amount").value = amount;
   document.getElementById("edit-income-taxable").checked = (taxable === 'True' || taxable === true);
   document.getElementById("edit-income-notes").value = notes;

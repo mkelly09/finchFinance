@@ -1,0 +1,182 @@
+{% extends 'base.html' %}
+{% load static finance_filters %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1 class="mb-3">Withholding Overview</h1>
+    <p class="text-muted mb-4">
+        Summary of your withholding accounts and buckets. Click a bucket name to see and edit its transactions.
+    </p>
+
+    <style>
+        .account-card {
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 16px 20px;
+            margin-bottom: 20px;
+            background-color: #fafafa;
+        }
+        .account-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin-bottom: 10px;
+        }
+        .account-name {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+        .account-meta {
+            color: #666;
+            font-size: 0.9rem;
+        }
+        .summary-line {
+            font-size: 0.9rem;
+            margin: 2px 0;
+        }
+        .summary-line strong {
+            font-weight: 600;
+        }
+        .badge-pill {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 999px;
+            font-size: 0.7rem;
+            font-weight: 600;
+        }
+        .badge-success-soft {
+            background-color: #d1fae5;
+            color: #065f46;
+        }
+        .badge-danger-soft {
+            background-color: #fee2e2;
+            color: #991b1b;
+        }
+        .badge-warning-soft {
+            background-color: #fef9c3;
+            color: #854d0e;
+        }
+        .withholding-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9rem;
+        }
+        .withholding-table th,
+        .withholding-table td {
+            padding: 6px 8px;
+            border-bottom: 1px solid #eee;
+        }
+        .withholding-table th {
+            text-align: left;
+            background-color: #f3f4f6;
+        }
+        .withholding-table td.right {
+            text-align: right;
+        }
+        a.bucket-link {
+            color: #2563eb;
+            text-decoration: none;
+        }
+        a.bucket-link:hover {
+            text-decoration: underline;
+        }
+    </style>
+
+    {% if accounts %}
+        {% for account in accounts %}
+            <div class="account-card">
+                <div class="account-header">
+                    <div>
+                        <div class="account-name">{{ account.name }}</div>
+                        <div class="account-meta">
+                            {{ account.institution }}
+                            {% if account.account_number_last4 %}
+                                &nbsp;·&nbsp;•••• {{ account.account_number_last4 }}
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="text-end" style="font-size: 0.9rem;">
+                        <div class="summary-line">
+                            Actual balance:
+                            <strong>{{ account.current_balance|currency }}</strong>
+                        </div>
+                        <div class="summary-line">
+                            In buckets:
+                            <strong>{{ account.withholding_total|currency }}</strong>
+                        </div>
+                        <div class="summary-line">
+                            Unallocated:
+                            <strong>{{ account.unallocated_balance|currency }}</strong>
+                            {% if account.unallocated_balance > 0 %}
+                                <span class="badge-pill badge-success-soft">extra cash</span>
+                            {% elif account.unallocated_balance < 0 %}
+                                <span class="badge-pill badge-danger-soft">over-allocated</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+
+                {% if account.withholding_categories.all %}
+                    <table class="withholding-table">
+                        <thead>
+                            <tr>
+                                <th>Bucket</th>
+                                <th class="right">Balance</th>
+                                <th class="right">Target</th>
+                                <th class="right">Remaining</th>
+                                <th>Next due</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for bucket in account.withholding_categories.all %}
+                                {% with remaining=bucket.remaining_to_target %}
+                                <tr>
+                                    <td>
+                                        <a class="bucket-link" href="{% url 'withholding_category_detail' bucket.pk %}">
+                                            {{ bucket.name }}
+                                        </a>
+                                    </td>
+                                    <td class="right">{{ bucket.balance|currency }}</td>
+                                    <td class="right">
+                                        {% if bucket.target_amount %}
+                                            {{ bucket.target_amount|currency }}
+                                        {% else %}
+                                            <span class="account-meta">Not set</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="right">
+                                        {% if bucket.target_amount %}
+                                            {{ remaining|currency }}
+                                            {% if remaining > 0 %}
+                                                <span class="badge-pill badge-warning-soft">to go</span>
+                                            {% elif remaining < 0 %}
+                                                <span class="badge-pill badge-danger-soft">over target</span>
+                                            {% else %}
+                                                <span class="badge-pill badge-success-soft">on target</span>
+                                            {% endif %}
+                                        {% else %}
+                                            <span class="account-meta">—</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if bucket.next_due_date %}
+                                            {{ bucket.next_due_date }}
+                                        {% else %}
+                                            <span class="account-meta">Not set</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endwith %}
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                {% else %}
+                    <p class="account-meta mb-0">No buckets defined for this account yet.</p>
+                {% endif %}
+            </div>
+        {% endfor %}
+    {% else %}
+        <p>No withholding accounts configured yet.</p>
+    {% endif %}
+</div>
+{% endblock %}

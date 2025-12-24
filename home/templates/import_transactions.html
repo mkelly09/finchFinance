@@ -211,6 +211,7 @@
                     <th>Vendor</th>
                     <th>Amount</th>
                     <th>Category (Expense/Income)</th>
+                    <th>Withholding</th>
                     <th>Location</th>
                     <th>Notes</th>
                     <th style="width: 120px;">Actions</th>
@@ -242,6 +243,26 @@
                             </div>
                             <div class="income-wrapper">
                                 {{ form.income_source }}
+                            </div>
+                        </td>
+
+                        <td class="withholding-col">
+                            <div class="small mb-1">
+                                <div class="form-check">
+                                    {{ form.apply_to_withholding }}
+                                    <label class="form-check-label small">
+                                        Contribution
+                                    </label>
+                                </div>
+                                <div class="form-check">
+                                    {{ form.is_withholding_payout }}
+                                    <label class="form-check-label small">
+                                        Payout (no expense)
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="small">
+                                {{ form.withholding_category }}
                             </div>
                         </td>
 
@@ -311,6 +332,14 @@
                         expenseWrapper.style.display = "";
                         incomeWrapper.style.display = "none";
                     }
+                }
+
+                function updateWithholdingVisibility(row) {
+                    const typeSelect = row.querySelector("select[name$='entry_type']");
+                    const whCol = row.querySelector(".withholding-col");
+                    if (!typeSelect || !whCol) return;
+                    const isExpense = typeSelect.value === "expense";
+                    whCol.style.display = isExpense ? "" : "none";
                 }
 
                 function getSplitGroupId(row) {
@@ -470,8 +499,10 @@
 
                     if (typeSelect) {
                         updateCategoryVisibility(row);
+                        updateWithholdingVisibility(row);
                         typeSelect.addEventListener("change", function () {
                             updateCategoryVisibility(row);
+                            updateWithholdingVisibility(row);
                             row.dataset.userChanged = "1";
                             applyRowColor(row);
                         });
@@ -513,6 +544,7 @@
                     }
 
                     applyRowColor(row);
+                    updateWithholdingVisibility(row);
                 }
 
                 function splitRow(row) {
