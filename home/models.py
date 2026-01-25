@@ -3,6 +3,8 @@ from django.db.models import Sum
 from django.db.models.functions import Coalesce
 from datetime import date as dt_date
 from decimal import Decimal
+from django.db.models import SET_NULL
+
 
 
 class Category(models.Model):
@@ -37,9 +39,16 @@ class IncomeCategory(models.Model):
         help_text="Default taxable setting for new income entries in this category.",
     )
 
+    default_rental_unit = models.ForeignKey(
+        "RentalUnit",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="default_income_categories",
+    )
+
     def __str__(self):
         return self.name
-
 
 
 class BankAccountType(models.TextChoices):
@@ -249,9 +258,51 @@ class Expense(models.Model):
         blank=True,
         related_name="expenses",
     )
+    rental_unit = models.ForeignKey(
+        "RentalUnit",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="expenses",
+        help_text="Optional: tag this expense to a rental unit (including Shared/Common).",
+    )
+
+    cra_category = models.ForeignKey(
+        "CRARentalExpenseCategory",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="expenses",
+        help_text="Optional: CRA rental expense classification for tax reporting.",
+    )
+
+    rental_business_use_pct = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Optional: percent (0–100) of this expense that is attributable to rental use (useful for mixed-use properties like Foxview).",
+    )
+
 
     def __str__(self):
         return f"{self.date} | {self.vendor_name} | {self.amount}"
+
+class ExpenseAttachment(models.Model):
+    expense = models.ForeignKey(
+        "Expense",
+        on_delete=models.CASCADE,
+        related_name="attachments",
+    )
+    file = models.FileField(upload_to="expense_attachments/%Y/%m/")
+    original_name = models.CharField(max_length=255, blank=True, default="")
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-uploaded_at", "-id"]
+
+    def __str__(self):
+        return self.original_name or f"Attachment {self.id} (Expense {self.expense_id})"
 
 
 class Income(models.Model):
@@ -262,6 +313,8 @@ class Income(models.Model):
         ("Investment Income", "Investment Income"),
         ("Miscellaneous", "Miscellaneous"),
     ]
+
+    rental_unit = models.ForeignKey("RentalUnit", null=True, blank=True, on_delete=SET_NULL, related_name="income_entries")
 
     date = models.DateField()
     amount = models.DecimalField(max_digits=10, decimal_places=2)
@@ -292,14 +345,83 @@ class Income(models.Model):
         blank=True,
         related_name="incomes",
     )
+    rental_unit = models.ForeignKey(
+        "RentalUnit",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="incomes",
+        help_text="Optional: tag this income to a rental unit (e.g. Arnprior MAIN/LOFT).",
+    )
 
     def save(self, *args, **kwargs):
-        # Automatically set taxable = True for all categories except Employment Income
-        if self.category != "Employment Income":
-            self.taxable = True
+        # Only apply defaults on CREATE (do not override user edits on updates)
+        if self.pk is None:
+            if self.income_category:
+                self.taxable = self.income_category.taxable_default
+            # else: leave whatever default/explicit value is already set
         super().save(*args, **kwargs)
 
     def __str__(self):
         cat = self.income_category.name if self.income_category else self.category
         return f"{self.date} | {cat} | {self.amount}"
+
+class RentalProperty(models.Model):
+    name = models.CharField(max_length=100, unique=True)
+    notes = models.TextField(blank=True, default="")
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+
+class RentalUnitType(models.TextChoices):
+    UNIT = "UNIT", "Unit"
+    SHARED = "SHARED", "Shared/Common"
+
+
+class RentalUnit(models.Model):
+    property = models.ForeignKey(
+        RentalProperty,
+        on_delete=models.CASCADE,
+        related_name="units",
+    )
+    name = models.CharField(max_length=100)
+    unit_type = models.CharField(
+        max_length=10,
+        choices=RentalUnitType.choices,
+        default=RentalUnitType.UNIT,
+    )
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["property__name", "name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["property", "name"],
+                name="uniq_rentalunit_per_property",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.property.name} – {self.name}"
+
+
+class CRARentalExpenseCategory(models.Model):
+    """
+    CRA rental expense classification bucket (e.g. Advertising, Insurance, Property taxes).
+    We'll seed common CRA categories in a follow-up data migration.
+    """
+    name = models.CharField(max_length=100, unique=True)
+    sort_order = models.PositiveIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["sort_order", "name"]
+
+    def __str__(self):
+        return self.name
 

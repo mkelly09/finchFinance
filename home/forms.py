@@ -1,6 +1,8 @@
 from django import forms
-from .models import Expense, Income, Category, IncomeCategory, BankAccount, WithholdingCategory
+from .models import Expense, ExpenseAttachment, Income, Category, IncomeCategory, BankAccount, WithholdingCategory, RentalUnit, CRARentalExpenseCategory
 
+class MultipleFileInput(forms.FileInput):
+    allow_multiple_selected = True
 
 
 class TransactionForm(forms.Form):
@@ -22,6 +24,13 @@ class TransactionForm(forms.Form):
         empty_label="(Select income category)",
     )
 
+    # Income-side rental tagging (optional override; otherwise default from IncomeCategory)
+    income_rental_unit = forms.ModelChoiceField(
+        queryset=RentalUnit.objects.select_related("property").order_by("property__name", "name"),
+        required=False,
+        empty_label="(Auto from source)",
+    )
+
     taxable = forms.BooleanField(required=False, initial=True)
     location = forms.CharField(required=False, initial='Ottawa')
     notes = forms.CharField(widget=forms.Textarea(attrs={'rows': 2}), required=False)
@@ -37,7 +46,21 @@ class TransactionForm(forms.Form):
         required=False,
         empty_label="(Select withholding bucket)",
     )
-
+    rental_unit = forms.ModelChoiceField(
+        queryset=RentalUnit.objects.select_related("property").order_by("property__name", "name"),
+        required=False,
+    )
+    cra_category = forms.ModelChoiceField(
+        queryset=CRARentalExpenseCategory.objects.filter(is_active=True).order_by("sort_order", "name"),
+        required=False,
+    )
+    rental_business_use_pct = forms.DecimalField(
+        required=False,
+        max_digits=5,
+        decimal_places=2,
+        min_value=0,
+        max_value=100,
+    )
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -70,7 +93,6 @@ class TransactionForm(forms.Form):
 
         self.fields["taxable"].initial = taxable_default
 
-
 class CSVUploadForm(forms.Form):
     """
     Simple form to upload a CSV file from the bank and select which bank account it belongs to.
@@ -81,7 +103,6 @@ class CSVUploadForm(forms.Form):
         label="Bank account",
         widget=forms.Select(attrs={"class": "form-select"}),
     )
-
 
 class TransactionImportForm(forms.Form):
     """
@@ -156,6 +177,21 @@ class TransactionImportForm(forms.Form):
         empty_label="(Select income category)",
         widget=forms.Select(attrs={"class": "form-select"}),
     )
+
+    income_rental_unit = forms.ModelChoiceField(
+        queryset=RentalUnit.objects.select_related("property").order_by("property__name", "name"),
+        required=False,
+        empty_label="(Auto from income source)",
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+
+    expense_rental_unit = forms.ModelChoiceField(
+        queryset=RentalUnit.objects.select_related("property").order_by("property__name", "name"),
+        required=False,
+        empty_label="(None)",
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+
 
     location = forms.CharField(
         max_length=100,
@@ -243,3 +279,41 @@ class TransactionImportForm(forms.Form):
             )
 
         return cleaned
+
+class ExpenseEditForm(forms.ModelForm):
+    class Meta:
+        model = Expense
+        fields = [
+            "date",
+            "vendor_name",
+            "category",
+            "amount",
+            "location",
+            "notes",
+            "bank_account",
+            "rental_unit",
+            "cra_category",
+            "rental_business_use_pct",
+        ]
+        widgets = {
+            "date": forms.DateInput(attrs={"type": "date", "class": "form-control"}),
+            "vendor_name": forms.TextInput(attrs={"class": "form-control"}),
+            "category": forms.Select(attrs={"class": "form-select"}),
+            "amount": forms.NumberInput(attrs={"class": "form-control"}),
+            "location": forms.TextInput(attrs={"class": "form-control"}),
+            "notes": forms.Textarea(attrs={"class": "form-control", "rows": 3}),
+            "bank_account": forms.Select(attrs={"class": "form-select"}),
+            "rental_unit": forms.Select(attrs={"class": "form-select"}),
+            "cra_category": forms.Select(attrs={"class": "form-select"}),
+            "rental_business_use_pct": forms.NumberInput(attrs={"class": "form-control"}),
+        }
+
+class ExpenseAttachmentUploadForm(forms.Form):
+    files = forms.FileField(
+        required=False,
+        widget=MultipleFileInput(attrs={
+            "multiple": True,
+            "class": "form-control",
+        }),
+    )
+

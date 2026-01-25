@@ -1,0 +1,238 @@
+{% load static %}
+{% load humanize %}
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Rental Tax Summary</title>
+    <link rel="stylesheet"
+          href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
+
+    <style>
+        .cra-label {
+            font-size: 0.95rem;
+            font-weight: 600;
+        }
+        .cra-box {
+            border: 1px solid #dee2e6;
+            border-radius: 0.5rem;
+            padding: 1rem;
+            background: #fff;
+        }
+        .cra-subtle {
+            color: #6c757d;
+            font-size: 0.85rem;
+        }
+        .cra-section-title {
+            font-size: 1.1rem;
+            font-weight: 700;
+            margin-bottom: 0.75rem;
+        }
+        .cra-total-row td {
+            font-weight: 700;
+            background: #f8f9fa;
+        }
+    </style>
+</head>
+
+<body class="bg-light">
+<div class="container my-4">
+
+    <div class="d-flex flex-wrap align-items-end justify-content-between gap-3 mb-3">
+        <div>
+            <h1 class="mb-1">Tax Summary — {{ property.name }}</h1>
+            <div class="text-muted">CRA-style view for T776 (no short-term rentals)</div>
+        </div>
+
+        <form method="get" class="d-flex flex-wrap align-items-end gap-2">
+            <div>
+                <label for="year" class="form-label mb-1">Tax year</label>
+                <select id="year" name="year" class="form-select">
+                    {% for y in year_options %}
+                        <option value="{{ y }}" {% if y == year %}selected{% endif %}>{{ y }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <button class="btn btn-primary" type="submit">Go</button>
+            </div>
+        </form>
+    </div>
+
+    {% if messages %}
+        {% for message in messages %}
+            <div class="alert alert-{{ message.tags }} mb-3">
+                {{ message }}
+            </div>
+        {% endfor %}
+    {% endif %}
+
+    <div class="d-flex gap-2 mb-3">
+        <a class="btn btn-outline-secondary" href="{% url 'rental_properties' %}">Back to properties</a>
+        <a class="btn btn-outline-secondary" href="{% url 'rental_property_detail' property.id %}">Property detail</a>
+    </div>
+
+    <!-- Part 3 — Income -->
+    <div class="cra-box mb-3">
+        <div class="cra-section-title">Part 3 — Income</div>
+
+        <div class="row g-3">
+            <div class="col-md-8">
+                <div class="cra-label">Rental property</div>
+                <div class="cra-subtle">
+                    (For now: shown at the property level; unit count excludes Shared/Common.)
+                </div>
+                <div class="mt-2">
+                    <div><strong>{{ property.name }}</strong></div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="cra-label">Number of units</div>
+                <div class="mt-2 fs-5"><strong>{{ unit_count }}</strong></div>
+            </div>
+
+            <div class="col-md-8">
+                <div class="cra-label">Total of all your gross rents in the year</div>
+                <div class="cra-subtle">No short-term rentals included.</div>
+            </div>
+            <div class="col-md-4 text-md-end">
+                <div class="fs-5"><strong>${{ income_total|floatformat:2|intcomma }}</strong></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Part 4 — Expenses -->
+    <div class="cra-box">
+        <div class="cra-section-title">Part 4 — Expenses</div>
+
+        {% if missing_cra_count %}
+    <div class="alert alert-warning py-2 mb-2 d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <div>
+            <strong>{{ missing_cra_count }}</strong> expense(s) are missing a CRA category for this property/year.
+            <span class="d-block small">(These won’t be included in the CRA category totals below.)</span>
+        </div>
+
+        <button class="btn btn-sm btn-outline-dark d-flex align-items-center gap-1"
+        type="button"
+        data-bs-toggle="collapse"
+        data-bs-target="#missingCraExpenses"
+        aria-expanded="false"
+        aria-controls="missingCraExpenses"
+        id="missingCraToggleBtn">
+    <span class="arrow" style="transition: transform 0.2s;">▸</span>
+    <span class="label">Show expenses</span>
+</button>
+
+    </div>
+
+    <div class="collapse" id="missingCraExpenses">
+        <div class="card card-body mb-3">
+            <div class="small text-muted mb-2">
+                These are expenses with a rental unit on this property, but no CRA category selected.
+                (Mortgage principal is a common example.)
+            </div>
+
+            <div class="table-responsive">
+                <table class="table table-sm table-bordered align-middle mb-0">
+                    <thead class="table-light">
+                    <tr>
+                        <th style="width: 120px;">Date</th>
+                        <th>Vendor</th>
+                        <th style="width: 220px;">Category</th>
+                        <th style="width: 220px;">Rental Unit</th>
+                        <th style="width: 140px;">Amount</th>
+                        <th>Notes</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    {% for e in missing_cra_expenses %}
+                        <tr>
+                            <td>{{ e.date|date:"Y-m-d" }}</td>
+                            <td>{{ e.vendor_name }}</td>
+                            <td>{{ e.category.name }}</td>
+                            <td>
+                                {% if e.rental_unit %}
+                                    {{ e.rental_unit.property.name }} — {{ e.rental_unit.name }}
+                                {% else %}
+                                    <span class="text-muted">—</span>
+                                {% endif %}
+                            </td>
+                            <td>${{ e.amount|floatformat:2|intcomma }}</td>
+                            <td class="text-truncate" style="max-width: 420px;">
+                                {{ e.notes|default:"" }}
+                            </td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+{% endif %}
+
+
+        <div class="table-responsive">
+            <table class="table table-sm table-bordered align-middle mb-0">
+                <thead class="table-light">
+                <tr>
+                    <th>CRA expense category</th>
+                    <th style="width: 180px;">Total expenses</th>
+                    <th style="width: 220px;">Personal portion of total expenses</th>
+                    <th style="width: 220px;">Rental portion of total expenses</th>
+                </tr>
+                </thead>
+                <tbody>
+                {% for r in rows %}
+                    <tr>
+                        <td>
+                            <a href="{% url 'rental_tax_category_detail' property.id r.cat.id %}?year={{ year }}">
+                                {{ r.cat.name }}
+                            </a>
+                        </td>
+                        <td>${{ r.total_raw|floatformat:2|intcomma }}</td>
+                        <td>${{ r.total_personal|floatformat:2|intcomma }}</td>
+                        <td><strong>${{ r.total_rental|floatformat:2|intcomma }}</strong></td>
+                    </tr>
+                {% endfor %}
+
+                <tr class="cra-total-row">
+                    <td>Total expenses</td>
+                    <td>${{ total_expenses_raw|floatformat:2|intcomma }}</td>
+                    <td>${{ total_expenses_personal|floatformat:2|intcomma }}</td>
+                    <td>${{ total_expenses_rental|floatformat:2|intcomma }}</td>
+                </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="mt-2 cra-subtle">
+            Personal portion is computed as: <code>amount - (amount * rental_business_use_pct/100)</code>.
+            If <code>rental_business_use_pct</code> is blank, it defaults to 100% rental (0% personal).
+        </div>
+    </div>
+
+</div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+    const collapseEl = document.getElementById("missingCraExpenses");
+    const toggleBtn = document.getElementById("missingCraToggleBtn");
+
+    if (!collapseEl || !toggleBtn) return;
+
+    const arrow = toggleBtn.querySelector(".arrow");
+    const label = toggleBtn.querySelector(".label");
+
+    collapseEl.addEventListener("show.bs.collapse", function () {
+        arrow.style.transform = "rotate(90deg)";
+        label.textContent = "Hide expenses";
+    });
+
+    collapseEl.addEventListener("hide.bs.collapse", function () {
+        arrow.style.transform = "rotate(0deg)";
+        label.textContent = "Show expenses";
+    });
+});
+</script>
+
+</body>
+</html>

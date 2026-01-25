@@ -3,8 +3,57 @@
 {% load humanize %}
 
 {% block content %}
+
+<style>
+  /* Force single-line rows + ellipsis truncation for dashboard tables */
+  .dashboard-table {
+    table-layout: fixed;   /* required for ellipsis to behave nicely in tables */
+    width: 100%;
+  }
+
+  .dashboard-table th,
+  .dashboard-table td {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: middle;
+  }
+
+  /* Optional: tighten row height a bit */
+  .dashboard-table td {
+    line-height: 1.2;
+    padding-top: 0.55rem;
+    padding-bottom: 0.55rem;
+  }
+
+  /* Column width helpers */
+.col-date {
+  width: 130px;           /* enough for "Dec. 29, 2025" */
+  white-space: nowrap;
+  overflow: visible;      /* critical: don't ellipsis dates */
+  text-overflow: clip;
+}
+
+.col-amount   { width: 110px; text-align: right; }
+.col-taxable  { width: 80px;  text-align: center; }
+.col-account  { width: 150px; }
+.col-rental   { width: 180px; }
+.col-vendor   { width: 180px; }
+.col-category { width: 210px; }
+
+/* Notes should not dominate the table */
+.col-notes {
+  width: 240px;           /* tune this */
+  max-width: 360px;
+}
+
+
+
+</style>
+
+
 <div class="container mt-4">
-  <!-- Summary + Month Selector in same row -->
+  <!-- Summary + Month Selector -->
   <div class="row mb-4 align-items-end">
     <div class="col-lg-8 mb-3 mb-lg-0">
       <h2>Summary for {{ selected_month_display }}</h2>
@@ -25,95 +74,62 @@
     </div>
   </div>
 
-  <!-- Accounts Overview -->
-  {% if accounts %}
-  <div class="row mb-4">
-    <div class="col">
-      <h3>Accounts Overview</h3>
-      <div class="table-responsive">
-        <table class="table table-sm table-striped align-middle">
-          <thead class="table-light">
-            <tr>
-              <th>Account</th>
-              <th>Type</th>
-              <th>Withholding?</th>
-              <th class="text-end">Current Balance</th>
-              <th class="text-end">Unallocated (if withholding)</th>
-              <th>Last Updated</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for account in accounts %}
-              <tr>
-                <td>{{ account.name }}</td>
-                <td>{{ account.get_account_type_display }}</td>
-                <td>{{ account.is_withholding_account|yesno:"Yes,No" }}</td>
-                <td class="text-end">
-                  ${{ account.current_balance|floatformat:2|intcomma }}
-                </td>
-                <td class="text-end">
-                  {% if account.is_withholding_account %}
-                    ${{ account.unallocated_balance|floatformat:2|intcomma }}
-                  {% else %}
-                    <span class="text-muted">—</span>
-                  {% endif %}
-                </td>
-                <td>
-                  {% if account.last_updated %}
-                    {{ account.last_updated|date:"Y-m-d" }}
-                  {% else %}
-                    <span class="text-muted">—</span>
-                  {% endif %}
-                </td>
-              </tr>
-            {% empty %}
-              <tr>
-                <td colspan="6" class="text-muted">No accounts defined yet.</td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-  {% endif %}
-
   <!-- Add Transaction -->
   <div class="row mb-4">
     <h4>Add Transaction</h4>
     <form method="post" class="row gx-2 gy-2 align-items-end">
       {% csrf_token %}
+
       <div class="col-auto">
         <label for="id_entry_type">Type:</label>
         {{ form.entry_type|add_class:"form-select" }}
       </div>
+
       <div class="col-auto">
         <label for="id_date">Date:</label>
         {{ form.date|add_class:"form-control" }}
       </div>
+
       <div class="w-100"></div>
+
       <div class="col-auto">
         <label for="id_amount">Amount:</label>
         {{ form.amount|add_class:"form-control" }}
       </div>
+
+      <!-- Expense fields -->
       <div class="col-auto expense-field">
         <label for="id_vendor_name">Vendor:</label>
         {{ form.vendor_name|add_class:"form-control" }}
       </div>
+
       <div class="col-auto expense-field">
         <label for="id_category">Category:</label>
         {{ form.category|add_class:"form-select" }}
       </div>
 
-      <!-- withholding contribution controls for manual expenses -->
+      <div class="col-auto expense-field">
+        <label for="id_rental_unit">Rental Unit:</label>
+        {{ form.rental_unit|add_class:"form-select" }}
+      </div>
+
+      <div class="col-auto expense-field">
+        <label for="id_cra_category">CRA Category:</label>
+        {{ form.cra_category|add_class:"form-select" }}
+      </div>
+
+      <div class="col-auto expense-field">
+        <label for="id_rental_business_use_pct">Rental %:</label>
+        {{ form.rental_business_use_pct|add_class:"form-control" }}
+      </div>
+
       <div class="col-auto expense-field">
         <div class="form-check mt-4">
           {{ form.apply_to_withholding|add_class:"form-check-input" }}
-          <label class="form-check-label" for="id_apply_to_withholding">
-            Apply to withholding
-          </label>
+          <label class="form-check-label" for="id_apply_to_withholding">Apply to withholding</label>
         </div>
       </div>
+
       <div class="col-auto expense-field">
         <label for="id_withholding_category">Bucket:</label>
         {{ form.withholding_category|add_class:"form-select" }}
@@ -124,11 +140,17 @@
         {{ form.location|add_class:"form-control" }}
       </div>
 
+      <!-- Income fields -->
       <div class="col-auto income-field">
         <label for="id_source">Source:</label>
-        <!-- source is now a ModelChoiceField(IncomeCategory), so render as select -->
         {{ form.source|add_class:"form-select" }}
       </div>
+
+      <div class="col-auto income-field" id="income-rental-unit-wrapper">
+        <label for="id_income_rental_unit">Rental Unit:</label>
+        {{ form.income_rental_unit|add_class:"form-select" }}
+      </div>
+
       <div class="col-auto income-field form-check mt-2">
         {{ form.taxable|add_class:"form-check-input" }}
         <label class="form-check-label" for="id_taxable">Taxable</label>
@@ -136,76 +158,60 @@
 
       <div class="col-auto">
         <label for="id_notes">Notes:</label>
-        <input type="text" name="notes" id="id_notes" class="form-control" style="width: 150px;" value="{{ form.notes.value|default:'' }}">
+        <input type="text" name="notes" id="id_notes" class="form-control" style="width: 150px;"
+               value="{{ form.notes.value|default:'' }}">
       </div>
+
       <div class="col-auto">
         <button type="submit" class="btn btn-success">Submit</button>
       </div>
     </form>
   </div>
 
-  <script>
-    function toggleFields() {
-      const entryType = document.getElementById("id_entry_type").value;
-      document.querySelectorAll(".expense-field").forEach(el => {
-        el.style.display = entryType === "expense" ? "block" : "none";
-      });
-      document.querySelectorAll(".income-field").forEach(el => {
-        el.style.display = entryType === "income" ? "block" : "none";
-      });
-    }
-
-    document.addEventListener("DOMContentLoaded", () => {
-      document.getElementById("id_entry_type").addEventListener("change", () => {
-        toggleFields();
-      });
-
-      toggleFields();
-    });
-  </script>
-
   <!-- Income Section -->
   <h3>Income</h3>
   {% if income_entries %}
-    <table class="table table-striped">
+    <table class="table table-striped dashboard-table">
       <thead>
         <tr>
-          <th>Date</th>
-          <th>Source</th>
-          <th>Account</th>
-          <th>Amount</th>
-          <th>Taxable</th>
-          <th>Notes</th>
+          <th class="col-date">Date</th>
+          <th class="col-category">Source</th>
+          <th class="col-rental">Rental Unit</th>
+          <th class="col-account">Account</th>
+          <th class="col-amount">Amount</th>
+          <th class="col-taxable">Taxable</th>
+          <th class="col-notes">Notes</th>
         </tr>
       </thead>
+
       <tbody>
         {% for income in income_entries|dictsortreversed:"date" %}
           <tr onclick="openIncomeEditModal(
             '{{ income.id }}',
             '{{ income.date|date:"Y-m-d" }}',
             '{{ income.income_category.id|default_if_none:"" }}',
+            '{% if income.rental_unit %}{{ income.rental_unit.id }}{% endif %}',
             '{{ income.amount }}',
             '{{ income.taxable }}',
             '{{ income.notes|escapejs }}'
           )" style="cursor: pointer;">
-            <td>{{ income.date }}</td>
-            <td>
-              {% if income.income_category %}
-                {{ income.income_category.name }}
-              {% else %}
-                {{ income.category }}
-              {% endif %}
+            <td class="col-date">{{ income.date }}</td>
+            <td class="col-category">
+              {% if income.income_category %}{{ income.income_category.name }}{% else %}{{ income.category }}{% endif %}
             </td>
-            <td>
-              {% if income.bank_account %}
-                {{ income.bank_account.name }}
+            <td class="col-rental">
+              {% if income.rental_unit %}
+                {{ income.rental_unit.property.name }} — {{ income.rental_unit.name }}
               {% else %}
                 <span class="text-muted">—</span>
               {% endif %}
             </td>
-            <td>${{ income.amount|floatformat:2|intcomma }}</td>
-            <td>{{ income.taxable|yesno:"Yes,No" }}</td>
-            <td>{{ income.notes }}</td>
+            <td class="col-account">
+              {% if income.bank_account %}{{ income.bank_account.name }}{% else %}<span class="text-muted">—</span>{% endif %}
+            </td>
+            <td class="col-amount">${{ income.amount|floatformat:2|intcomma }}</td>
+            <td class="col-taxable">{{ income.taxable|yesno:"Yes,No" }}</td>
+            <td class="col-notes">{{ income.notes }}</td>
           </tr>
         {% endfor %}
       </tbody>
@@ -214,21 +220,22 @@
     <p>No income records found for this month.</p>
   {% endif %}
 
-  <!-- Expenses Table -->
+  <!-- Expenses Section -->
   <h3>Expenses</h3>
   {% if expense_entries %}
-    <table class="table table-striped">
+    <table class="table table-striped dashboard-table">
       <thead>
-        <tr>
-          <th>Date</th>
-          <th>Vendor</th>
-          <th>Category</th>
-          <th>Account</th>
-          <th>Location</th>
-          <th>Amount</th>
-          <th>Notes</th>
-        </tr>
-      </thead>
+      <tr>
+        <th class="col-date">Date</th>
+        <th class="col-vendor">Vendor</th>
+        <th class="col-category">Category</th>
+        <th class="col-rental">Rental Unit</th>
+        <th class="col-account">Account</th>
+        <th class="col-amount">Amount</th>
+        <th class="col-notes">Notes</th>
+        <th style="width: 120px;"></th>
+      </tr>
+    </thead>
       <tbody>
         {% for expense in expense_entries|dictsortreversed:"date" %}
           <tr onclick="openEditModal(
@@ -238,21 +245,38 @@
             '{{ expense.category.name|escapejs }}',
             '{{ expense.location|escapejs }}',
             '{{ expense.amount }}',
-            '{{ expense.notes|escapejs }}'
+            '{{ expense.notes|escapejs }}',
+            '{% if expense.rental_unit %}{{ expense.rental_unit.id }}{% endif %}',
+            '{% if expense.cra_category %}{{ expense.cra_category.id }}{% endif %}',
+            '{% if expense.rental_business_use_pct != None %}{{ expense.rental_business_use_pct }}{% endif %}'
           )" style="cursor: pointer;">
-            <td>{{ expense.date }}</td>
-            <td>{{ expense.vendor_name }}</td>
-            <td>{{ expense.category.name }}</td>
-            <td>
-              {% if expense.bank_account %}
-                {{ expense.bank_account.name }}
+            <td class="col-date">{{ expense.date }}</td>
+            <td class="col-vendor">{{ expense.vendor_name }}</td>
+            <td class="col-category">{{ expense.category.name }}</td>
+            <td class="col-rental">
+              {% if expense.rental_unit %}
+                {{ expense.rental_unit.property.name }} — {{ expense.rental_unit.name }}
               {% else %}
                 <span class="text-muted">—</span>
               {% endif %}
             </td>
-            <td>{{ expense.location }}</td>
-            <td>${{ expense.amount|floatformat:2|intcomma }}</td>
-            <td>{{ expense.notes }}</td>
+            <td class="col-account">
+              {% if expense.bank_account %}{{ expense.bank_account.name }}{% else %}<span class="text-muted">—</span>{% endif %}
+            </td>
+            <td class="col-amount">${{ expense.amount|floatformat:2|intcomma }}</td>
+            <td class="col-notes">{{ expense.notes }}</td>
+            <td class="text-end">
+              <a
+                class="btn btn-sm btn-outline-secondary"
+                href="{% url 'expense_edit' expense.id %}"
+                onclick="event.stopPropagation();"
+              >
+                Receipts{% if expense.attachment_count %} 📎 {{ expense.attachment_count }}{% endif %} →
+
+              </a>
+            </td>
+
+
           </tr>
         {% endfor %}
       </tbody>
@@ -264,6 +288,7 @@
 
 {{ expenses_by_category|json_script:"expenses-data" }}
 {{ targets_by_category|json_script:"targets-data" }}
+{{ income_source_default_unit_map|json_script:"income-source-default-unit-map" }}
 
 <h3>Spending by Category</h3>
 <canvas id="categoryChart" height="100"></canvas>
@@ -310,19 +335,10 @@
         responsive: true,
         plugins: {
           legend: { position: 'top' },
-          title: {
-            display: true,
-            text: 'Actual vs Target Spending by Category'
-          }
+          title: { display: true, text: 'Actual vs Target Spending by Category' }
         },
         scales: {
-          y: {
-            beginAtZero: true,
-            title: {
-              display: true,
-              text: 'Amount ($)'
-            }
-          }
+          y: { beginAtZero: true, title: { display: true, text: 'Amount ($)' } }
         }
       }
     };
@@ -331,33 +347,17 @@
   });
 </script>
 
-<!-- Modal Backdrop -->
+<!-- Backdrop -->
 <div id="modalBackdrop" style="
-  display: none;
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background-color: rgba(0, 0, 0, 0.5);
-  z-index: 999;
-"></div>
+  display:none; position:fixed; top:0; left:0; width:100%; height:100%;
+  background-color:rgba(0,0,0,0.5); z-index:999;">
+</div>
 
-<!-- Edit Expense Modal -->
+<!-- Expense Modal -->
 <div id="editExpenseModal" style="
-  display: none;
-  position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  background: white;
-  padding: 20px;
-  border-radius: 8px;
-  box-shadow: 0 4px 10px rgba(0,0,0,0.3);
-  z-index: 1000;
-  width: 600px;
-  max-width: 90%;
-">
+  display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%);
+  background:white; padding:20px; border-radius:8px; box-shadow:0 4px 10px rgba(0,0,0,0.3);
+  z-index:1000; width:600px; max-width:90%;">
   <h3 class="mb-3">Edit Expense</h3>
   <form method="post" id="edit-expense-form">
     {% csrf_token %}
@@ -401,30 +401,69 @@
         </div>
       </div>
 
-      <div class="text-end mt-3">
-        <button type="submit" class="btn btn-primary me-2">Save Changes</button>
-        <button type="submit" name="delete_expense" value="1" class="btn btn-danger me-2" onclick="return confirm('Are you sure?');">Delete</button>
-        <button type="button" class="btn btn-secondary" onclick="closeEditModal()">Cancel</button>
+      <hr class="my-3">
+      <h6 class="mb-2">Rental / Tax (optional)</h6>
+
+      <div class="row mb-2">
+        <div class="col-6">
+          <label for="edit-rental-unit" class="form-label">Rental Unit:</label>
+          <select name="rental_unit" id="edit-rental-unit" class="form-select">
+            <option value="">— (Not a rental expense) —</option>
+            {% for u in all_rental_units %}
+              <option value="{{ u.id }}">{{ u.property.name }} — {{ u.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-6">
+          <label for="edit-cra-category" class="form-label">CRA Category:</label>
+          <select name="cra_category" id="edit-cra-category" class="form-select">
+            <option value="">—</option>
+            {% for c in cra_categories %}
+              <option value="{{ c.id }}">{{ c.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
       </div>
+
+      <div class="row mb-2">
+        <div class="col-6">
+          <label for="edit-rental-pct" class="form-label">Rental % (0–100):</label>
+          <input type="number" step="0.01" min="0" max="100" class="form-control"
+                 name="rental_business_use_pct" id="edit-rental-pct" placeholder="Leave blank for 100%">
+          <div class="form-text">Useful for mixed-use properties (e.g. Foxview shared expenses).</div>
+        </div>
+        <div class="col-6"></div>
+      </div>
+
+      <div class="d-flex justify-content-between align-items-center mt-3">
+        <a
+          id="expense-advanced-link"
+          class="btn btn-outline-secondary"
+          href="#"
+          target="_blank"
+          rel="noopener"
+          onclick="event.stopPropagation();"
+        >
+          Receipts / Advanced…
+        </a>
+
+        <div class="text-end">
+          <button type="submit" class="btn btn-primary me-2">Save Changes</button>
+          <button type="submit" name="delete_expense" value="1" class="btn btn-danger me-2" onclick="return confirm('Are you sure?');">Delete</button>
+          <button type="button" class="btn btn-secondary" onclick="closeEditModal()">Cancel</button>
+        </div>
+      </div>
+
     </div>
   </form>
 </div>
 
-<!-- Edit Income Modal -->
+<!-- Income Modal -->
 <div id="editIncomeModal" style="
-  display: none;
-  position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  background: white;
-  padding: 20px;
-  border-radius: 8px;
-  box-shadow: 0 4px 10px rgba(0,0,0,0.3);
-  z-index: 1000;
-  width: 600px;
-  max-width: 90%;
-">
+  display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%);
+  background:white; padding:20px; border-radius:8px; box-shadow:0 4px 10px rgba(0,0,0,0.3);
+  z-index:1000; width:600px; max-width:90%;">
   <h3 class="mb-3">Edit Income</h3>
   <form method="post" id="edit-income-form">
     {% csrf_token %}
@@ -447,13 +486,26 @@
       </div>
 
       <div class="row mb-2">
+        <div class="col-12">
+          <label for="edit-income-rental-unit" class="form-label">Rental Unit (optional):</label>
+          <select class="form-select" name="rental_unit" id="edit-income-rental-unit">
+            <option value="">—</option>
+            {% for u in all_rental_units %}
+              <option value="{{ u.id }}">{{ u.property.name }} — {{ u.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+
+      <div class="row mb-2">
         <div class="col-6">
           <label for="edit-income-amount" class="form-label">Amount:</label>
           <input type="number" step="0.01" class="form-control" name="amount" id="edit-income-amount" required />
         </div>
         <div class="col-6">
           <label class="form-label">Taxable:</label><br />
-          <input type="checkbox" class="form-check-input" name="taxable" id="edit-income-taxable" />
+          <input type="hidden" name="taxable" value="0">
+          <input type="checkbox" class="form-check-input" name="taxable" id="edit-income-taxable" value="1" />
           <label class="form-check-label" for="edit-income-taxable">Yes</label>
         </div>
       </div>
@@ -475,54 +527,184 @@
 </div>
 
 <script>
-function openEditModal(id, date, vendor, category, location, amount, notes) {
-  document.getElementById('edit-expense-id').value = id;
-  document.getElementById('edit-date').value = date;
-  document.getElementById('edit-vendor').value = vendor;
-  document.getElementById('edit-category').value = category;
-  document.getElementById('edit-location').value = location;
-  document.getElementById('edit-amount').value = amount;
-  document.getElementById('edit-notes').value = notes;
-
-  document.getElementById('modalBackdrop').style.display = 'block';
-  document.getElementById('editExpenseModal').style.display = 'block';
-}
-
-function closeEditModal() {
-  document.getElementById('modalBackdrop').style.display = 'none';
-  document.getElementById('editExpenseModal').style.display = 'none';
-}
-
-// Optional: click backdrop to close
-document.getElementById('modalBackdrop').addEventListener('click', () => {
-  closeEditModal();
-  closeIncomeModal();
-});
-
-// Optional: ESC key to close
-document.addEventListener('keydown', function(event) {
-  if (event.key === "Escape") {
-    closeEditModal();
-    closeIncomeModal();
-  }
-});
-
-function openIncomeEditModal(id, date, sourceId, amount, taxable, notes) {
-  document.getElementById("edit-income-id").value = id;
-  document.getElementById("edit-income-date").value = date;
-  document.getElementById("edit-income-source").value = sourceId;
-  document.getElementById("edit-income-amount").value = amount;
-  document.getElementById("edit-income-taxable").checked = (taxable === 'True' || taxable === true);
-  document.getElementById("edit-income-notes").value = notes;
-
-  document.getElementById("modalBackdrop").style.display = "block";
-  document.getElementById("editIncomeModal").style.display = "block";
-}
-
-function closeIncomeModal() {
-  document.getElementById("editIncomeModal").style.display = "none";
-  document.getElementById("modalBackdrop").style.display = "none";
-}
+  const EXPENSE_EDIT_URL_TEMPLATE = "{% url 'expense_edit' 999999 %}";
 </script>
+<script>
+  // -----------------------
+  // Safe access to income source → default rental unit map
+  // -----------------------
+  const mapEl = document.getElementById("income-source-default-unit-map");
+  const incomeSourceToDefaultUnit = mapEl ? JSON.parse(mapEl.textContent) : {};
+
+  // -----------------------
+  // Entry type toggling
+  // -----------------------
+  function toggleFields() {
+    const entryTypeEl = document.getElementById("id_entry_type");
+    if (!entryTypeEl) return;
+
+    const entryType = entryTypeEl.value;
+
+    document.querySelectorAll(".expense-field").forEach(el => {
+      el.style.display = entryType === "expense" ? "block" : "none";
+    });
+
+    document.querySelectorAll(".income-field").forEach(el => {
+      el.style.display = entryType === "income" ? "block" : "none";
+    });
+  }
+
+  // -----------------------
+  // Add Transaction: income source → rental unit
+  // -----------------------
+  function syncIncomeRentalUnitFromSource() {
+    const sourceEl = document.getElementById("id_source");
+    const unitEl = document.getElementById("id_income_rental_unit");
+    if (!sourceEl || !unitEl) return;
+
+    const sourceId = String(sourceEl.value || "");
+    const defaultUnitId = incomeSourceToDefaultUnit[sourceId];
+
+    if (defaultUnitId) {
+      unitEl.value = String(defaultUnitId);
+    }
+  }
+
+  // -----------------------
+  // Income modal: source → rental unit
+  // -----------------------
+  function syncIncomeModalRentalUnitFromSource() {
+    const sourceEl = document.getElementById("edit-income-source");
+    const unitEl = document.getElementById("edit-income-rental-unit");
+    if (!sourceEl || !unitEl) return;
+
+    const sourceId = String(sourceEl.value || "");
+    const defaultUnitId = incomeSourceToDefaultUnit[sourceId];
+
+    if (defaultUnitId && !unitEl.value) {
+      unitEl.value = String(defaultUnitId);
+    }
+  }
+
+  // -----------------------
+  // DOM ready
+  // -----------------------
+  document.addEventListener("DOMContentLoaded", () => {
+    // Entry type toggle
+    const entryTypeEl = document.getElementById("id_entry_type");
+    if (entryTypeEl) {
+      entryTypeEl.addEventListener("change", toggleFields);
+      toggleFields();
+    }
+
+    // Add Transaction income source listener
+    const addIncomeSourceEl = document.getElementById("id_source");
+    if (addIncomeSourceEl) {
+      addIncomeSourceEl.addEventListener("change", syncIncomeRentalUnitFromSource);
+      syncIncomeRentalUnitFromSource();
+    }
+
+    // Income edit modal source listener
+    const editIncomeSourceEl = document.getElementById("edit-income-source");
+    if (editIncomeSourceEl) {
+      editIncomeSourceEl.addEventListener("change", () => {
+        const unitEl = document.getElementById("edit-income-rental-unit");
+        if (unitEl) unitEl.value = "";
+        syncIncomeModalRentalUnitFromSource();
+      });
+    }
+
+    // Backdrop click
+    const backdrop = document.getElementById("modalBackdrop");
+    if (backdrop) {
+      backdrop.addEventListener("click", () => {
+        closeEditModal();
+        closeIncomeModal();
+      });
+    }
+  });
+
+  // -----------------------
+  // Expense modal open/close
+  // -----------------------
+  function openEditModal(id, date, vendor, category, location, amount, notes, rentalUnitId, craCategoryId, rentalPct) {
+    document.getElementById("edit-expense-id").value = id;
+    document.getElementById("edit-date").value = date;
+    document.getElementById("edit-vendor").value = vendor;
+    document.getElementById("edit-category").value = category;
+    document.getElementById("edit-location").value = location;
+    document.getElementById("edit-amount").value = amount;
+    document.getElementById("edit-notes").value = notes;
+
+    document.getElementById("edit-rental-unit").value = rentalUnitId || "";
+    document.getElementById("edit-cra-category").value = craCategoryId || "";
+    document.getElementById("edit-rental-pct").value = rentalPct || "";
+
+    const advLink = document.getElementById("expense-advanced-link");
+    if (advLink) {
+      advLink.href = EXPENSE_EDIT_URL_TEMPLATE.replace("999999", String(id));
+    }
+
+
+
+
+    document.getElementById("modalBackdrop").style.display = "block";
+    document.getElementById("editExpenseModal").style.display = "block";
+
+
+
+
+  }
+
+  function closeEditModal() {
+    const modal = document.getElementById("editExpenseModal");
+    const backdrop = document.getElementById("modalBackdrop");
+    if (modal) modal.style.display = "none";
+    if (backdrop) backdrop.style.display = "none";
+  }
+
+  // -----------------------
+  // Income modal open/close
+  // -----------------------
+  function openIncomeEditModal(id, date, sourceId, rentalUnitId, amount, taxable, notes) {
+    document.getElementById("edit-income-id").value = id;
+    document.getElementById("edit-income-date").value = date;
+    document.getElementById("edit-income-source").value = sourceId;
+    document.getElementById("edit-income-amount").value = amount;
+
+    const t = String(taxable).toLowerCase();
+    document.getElementById("edit-income-taxable").checked =
+      (t === "true" || t === "1" || t === "yes" || t === "on");
+
+    document.getElementById("edit-income-notes").value = notes;
+
+    const defaultUnitId = incomeSourceToDefaultUnit[String(sourceId)];
+    document.getElementById("edit-income-rental-unit").value =
+      rentalUnitId || (defaultUnitId ? String(defaultUnitId) : "");
+
+    document.getElementById("modalBackdrop").style.display = "block";
+    document.getElementById("editIncomeModal").style.display = "block";
+  }
+
+  function closeIncomeModal() {
+    const modal = document.getElementById("editIncomeModal");
+    const backdrop = document.getElementById("modalBackdrop");
+    if (modal) modal.style.display = "none";
+    if (backdrop) backdrop.style.display = "none";
+  }
+
+  // -----------------------
+  // ESC key handling
+  // -----------------------
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "Escape") {
+      closeEditModal();
+      closeIncomeModal();
+    }
+  });
+</script>
+
+
+
 
 {% endblock %}

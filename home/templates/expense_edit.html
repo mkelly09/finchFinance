@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block content %}
+<div class="container mt-4" style="max-width: 980px;">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <h2 class="mb-0">Edit Expense</h2>
+      <div class="text-muted small">
+        {{ expense.date|date:"Y-m-d" }} — {{ expense.vendor_name }} — ${{ expense.amount|floatformat:2|intcomma }}
+      </div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{% url 'dashboard' %}?month={{ expense.date|date:"Y-m" }}">
+        ← Back to Dashboard
+      </a>
+    </div>
+  </div>
+
+  {% if messages %}
+    {% for message in messages %}
+      <div class="alert alert-{{ message.tags }} mb-3">{{ message }}</div>
+    {% endfor %}
+  {% endif %}
+
+  <div class="card shadow-sm mb-3">
+    <div class="card-body">
+
+      {% if form.errors %}
+        <div class="alert alert-danger">
+          <div class="fw-semibold mb-2">Please correct the errors below.</div>
+
+          {{ form.non_field_errors }}
+
+          <ul class="mb-0">
+            {% for field in form %}
+              {% for error in field.errors %}
+                <li><strong>{{ field.label }}:</strong> {{ error }}</li>
+              {% endfor %}
+            {% endfor %}
+          </ul>
+        </div>
+      {% endif %}
+
+      <form method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+
+        <div class="row g-3">
+          <div class="col-md-3">
+            <label class="form-label">Date</label>
+            {{ form.date }}
+          </div>
+
+          <div class="col-md-5">
+            <label class="form-label">Vendor</label>
+            {{ form.vendor_name }}
+          </div>
+
+          <div class="col-md-4">
+            <label class="form-label">Category</label>
+            {{ form.category }}
+          </div>
+
+          <div class="col-md-3">
+            <label class="form-label">Amount</label>
+            {{ form.amount }}
+          </div>
+
+          <div class="col-md-3">
+            <label class="form-label">Bank Account</label>
+            {{ form.bank_account }}
+          </div>
+
+          <div class="col-md-3">
+            <label class="form-label">Rental Unit</label>
+            {{ form.rental_unit }}
+          </div>
+
+          <div class="col-md-3">
+            <label class="form-label">CRA Category</label>
+            {{ form.cra_category }}
+          </div>
+
+          <div class="col-md-3">
+            <label class="form-label">Rental Business Use %</label>
+            {{ form.rental_business_use_pct }}
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label">Location</label>
+            {{ form.location }}
+          </div>
+
+          <div class="col-md-12">
+            <label class="form-label">Notes</label>
+            {{ form.notes }}
+          </div>
+        </div>
+
+        <hr class="my-4">
+
+        <div class="mb-3">
+          <label class="form-label">Upload receipt(s)</label>
+          <input
+            type="file"
+            name="files"
+            class="form-control"
+            multiple
+            accept=".pdf,.png,.jpg,.jpeg"
+          >
+          <div class="form-text">You can select multiple files (PDF/JPG/PNG).</div>
+        </div>
+
+        <div class="d-flex gap-2">
+          <button class="btn btn-primary" type="submit">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <h5 class="mb-3">Attachments</h5>
+
+      {% if attachments %}
+        <div class="list-group">
+          {% for a in attachments %}
+            <div class="list-group-item d-flex justify-content-between align-items-center">
+              <div class="me-3">
+                <div class="fw-semibold">
+                  <a href="{{ a.file.url }}" target="_blank" rel="noopener">
+                    {{ a.original_name|default:"Attachment" }}
+                  </a>
+                </div>
+                <div class="text-muted small">
+                  Uploaded {{ a.uploaded_at|date:"Y-m-d H:i" }}
+                </div>
+              </div>
+
+              <form method="post" class="m-0">
+                {% csrf_token %}
+                <input type="hidden" name="delete_attachment_id" value="{{ a.id }}">
+                <button class="btn btn-sm btn-outline-danger" type="submit"
+                        onclick="return confirm('Delete this attachment?');">
+                  Delete
+                </button>
+              </form>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="text-muted">No attachments yet.</div>
+      {% endif %}
+    </div>
+  </div>
+
+</div>
+{% endblock %}

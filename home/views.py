@@ -8,16 +8,19 @@ from decimal import Decimal, InvalidOperation
 from django.db import IntegrityError
 
 from django.contrib import messages
-from django.db.models import Sum
+from django.db.models import Sum, F, Value, DecimalField, ExpressionWrapper, Case, When, Count
 from django.forms import ModelForm, formset_factory
 from django.http import HttpResponseBadRequest
 from django.shortcuts import render, redirect, get_object_or_404
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods, require_POST
+from django.conf import settings
+from django.urls import reverse
 
-from .forms import TransactionForm, CSVUploadForm, TransactionImportForm
+from .forms import TransactionForm, CSVUploadForm, TransactionImportForm, ExpenseEditForm, ExpenseAttachmentUploadForm
 from .models import (
     Expense,
+    ExpenseAttachment,
     Income,
     Category,
     IncomeCategory,
@@ -25,6 +28,12 @@ from .models import (
     ImportBatch,
     WithholdingCategory,
     WithholdingTransaction,
+
+
+    # ✅ Rental / CRA additions
+    RentalProperty,
+    RentalUnit,
+    CRARentalExpenseCategory,
 )
 
 TransactionImportFormSet = formset_factory(TransactionImportForm, extra=0)
@@ -83,25 +92,53 @@ def get_category_cached(name, cache, missing_set):
         return None
 
 
-def apply_income_rules(desc_upper, amount, entry_type_default):
+def apply_income_rules(desc_upper, amount, entry_type_default, parsed_date=None):
+    """
+    Income inference rules used only during import parsing.
+
+    Important safety constraints:
+    - Only runs when entry_type_default is already 'income' (deposit column)
+    - E-TRANSFER heuristic triggers only when 'E-TRANSFER' is in description
+    - GLOBALIZATION is always Employment Income
+    """
     entry_type = entry_type_default
     income_source = ""
 
+    # Employment income (explicit)
     if "GLOBALIZATION" in desc_upper:
-        entry_type = "income"
-        income_source = "Employment Income"
-        return entry_type, income_source
+        return "income", "Employment Income"
 
+    # Only infer rental income on deposits that contain E-TRANSFER (substring match; unique codes ok)
     if "E-TRANSFER" in desc_upper and entry_type_default == "income":
+        # If we have a date, enforce "around the 1st of month" window (± ~1.5 weeks)
+        in_window = True
+        if parsed_date:
+            first_of_month = date(parsed_date.year, parsed_date.month, 1)
+            in_window = abs((parsed_date - first_of_month).days) <= 11  # ~1.5 weeks
+
+        if in_window:
+            # Amount heuristics (±5%)
+            main_target = Decimal("2500")
+            loft_target = Decimal("1600")
+
+            main_low = main_target * Decimal("0.95")
+            main_high = main_target * Decimal("1.05")
+
+            loft_low = loft_target * Decimal("0.95")
+            loft_high = loft_target * Decimal("1.05")
+
+            if main_low <= amount <= main_high:
+                return "income", "Arnprior Rental Income (MAIN)"
+            if loft_low <= amount <= loft_high:
+                return "income", "Arnprior Rental Income (LOFT)"
+
+        # Fallback (your existing loose thresholds) — still only for E-TRANSFER deposits
         if Decimal("2000") <= amount <= Decimal("2700"):
-            entry_type = "income"
-            income_source = "Arnprior Rental Income (MAIN)"
+            return "income", "Arnprior Rental Income (MAIN)"
         elif amount < Decimal("2000"):
-            entry_type = "income"
-            income_source = "Arnprior Rental Income (LOFT)"
+            return "income", "Arnprior Rental Income (LOFT)"
 
     return entry_type, income_source
-
 
 def apply_expense_rules(desc_upper, amount, category_cache, missing_categories):
     if "E-TFR" in desc_upper and amount == EXACT_ETFR_SNOW_REMOVAL_AMOUNT:
@@ -115,6 +152,29 @@ def apply_expense_rules(desc_upper, amount, category_cache, missing_categories):
 
     return None
 
+def get_arnprior_shared_unit_id():
+    """
+    Best-effort lookup for the Arnprior shared/common unit.
+    Returns RentalUnit.id or None (never raises).
+    SQLite-safe: uses icontains instead of regex.
+    """
+    qs = RentalUnit.objects.select_related("property").filter(property__name__iexact="Arnprior")
+    unit = (
+        qs.filter(name__icontains="shared").order_by("name").first()
+        or qs.filter(name__icontains="common").order_by("name").first()
+    )
+    return unit.id if unit else None
+
+def build_income_rental_unit_map():
+    """
+    Used by import review UI to display inferred rental unit for an IncomeCategory.
+    Returns: { "<income_category_id>": "Property — Unit" }
+    """
+    m = {}
+    for ic in IncomeCategory.objects.select_related("default_rental_unit__property").all():
+        if ic.default_rental_unit_id:
+            m[str(ic.id)] = f"{ic.default_rental_unit.property.name} — {ic.default_rental_unit.name}"
+    return m
 
 def dashboard(request):
     today = date.today()
@@ -131,6 +191,9 @@ def dashboard(request):
     selected_month_display = first_day.strftime("%B %Y")
 
     if request.method == "POST":
+        # -------------------------
+        # Expense modal edit/delete
+        # -------------------------
         if "expense_id" in request.POST:
             expense = get_object_or_404(Expense, pk=request.POST["expense_id"])
             if "delete_expense" in request.POST:
@@ -138,16 +201,41 @@ def dashboard(request):
             else:
                 expense.date = datetime.strptime(request.POST["date"], "%Y-%m-%d").date()
                 expense.vendor_name = request.POST["vendor_name"]
+
                 category_name = request.POST["category"]
                 expense.category = get_object_or_404(Category, name=category_name)
+
                 expense.location = request.POST.get("location", "Ottawa")
                 expense.amount = Decimal(request.POST["amount"])
-                expense.notes = request.POST["notes"]
+                expense.notes = request.POST.get("notes", "")
+
+                # ✅ NEW: Rental fields (optional)
+                rental_unit_id = (request.POST.get("rental_unit") or "").strip()
+                if rental_unit_id:
+                    expense.rental_unit = get_object_or_404(RentalUnit, pk=rental_unit_id)
+                else:
+                    expense.rental_unit = None
+
+                cra_category_id = (request.POST.get("cra_category") or "").strip()
+                if cra_category_id:
+                    expense.cra_category = get_object_or_404(CRARentalExpenseCategory, pk=cra_category_id)
+                else:
+                    expense.cra_category = None
+
+                pct_str = (request.POST.get("rental_business_use_pct") or "").strip()
+                if pct_str:
+                    expense.rental_business_use_pct = Decimal(pct_str)
+                else:
+                    expense.rental_business_use_pct = None
+
                 expense.save()
 
             selected_month_param = f"{expense.date.year:04d}-{expense.date.month:02d}"
             return redirect(f"/?month={selected_month_param}")
 
+        # -------------------------
+        # Income modal edit/delete
+        # -------------------------
         elif "income_id" in request.POST:
             income = get_object_or_404(Income, pk=request.POST["income_id"])
             if "delete_income" in request.POST:
@@ -163,13 +251,26 @@ def dashboard(request):
                     income.category = income_cat.name  # legacy sync for now
 
                 income.amount = Decimal(request.POST["amount"])
-                income.taxable = request.POST.get("taxable") == "on"
-                income.notes = request.POST["notes"]
+                income.taxable = request.POST.get("taxable") == "1"
+                income.notes = request.POST.get("notes", "")
+                rental_unit_id = (request.POST.get("rental_unit") or "").strip()
+                # If user didn't provide rental_unit, fall back to the category's default (if any)
+                if not rental_unit_id and income_cat and income_cat.default_rental_unit_id:
+                    income.rental_unit = income_cat.default_rental_unit
+                else:
+                    if rental_unit_id:
+                        income.rental_unit = get_object_or_404(RentalUnit, pk=rental_unit_id)
+                    else:
+                        income.rental_unit = None
+
                 income.save()
 
             selected_month_param = f"{income.date.year:04d}-{income.date.month:02d}"
             return redirect(f"/?month={selected_month_param}")
 
+        # -------------------------
+        # New transaction (Add Transaction form)
+        # -------------------------
         else:
             form = TransactionForm(request.POST)
             if form.is_valid():
@@ -178,8 +279,12 @@ def dashboard(request):
                 amount = form.cleaned_data["amount"]
                 notes = form.cleaned_data["notes"]
 
+
                 if entry_type == "income":
                     source = form.cleaned_data["source"]  # IncomeCategory instance or None
+                    income_rental_unit = form.cleaned_data.get("income_rental_unit")
+                    if not income_rental_unit and source and source.default_rental_unit_id:
+                        income_rental_unit = source.default_rental_unit
 
                     income_exists = Income.objects.filter(
                         date=entry_date,
@@ -197,6 +302,7 @@ def dashboard(request):
                             category=source.name if source else "",  # legacy sync
                             taxable=form.cleaned_data["taxable"],
                             notes=notes,
+                            rental_unit=income_rental_unit,
                         )
 
                 else:
@@ -206,6 +312,11 @@ def dashboard(request):
 
                     apply_to_withholding = form.cleaned_data.get("apply_to_withholding")
                     withholding_category = form.cleaned_data.get("withholding_category")
+
+                    # ✅ NEW: rental fields from TransactionForm
+                    rental_unit = form.cleaned_data.get("rental_unit")
+                    cra_category = form.cleaned_data.get("cra_category")
+                    rental_pct = form.cleaned_data.get("rental_business_use_pct")
 
                     expense_exists = Expense.objects.filter(
                         date=entry_date,
@@ -224,6 +335,11 @@ def dashboard(request):
                             category=category,
                             location=location,
                             notes=notes,
+
+                            # ✅ NEW fields persisted
+                            rental_unit=rental_unit,
+                            cra_category=cra_category,
+                            rental_business_use_pct=rental_pct,
                         )
 
                         if apply_to_withholding and withholding_category:
@@ -239,8 +355,17 @@ def dashboard(request):
     else:
         form = TransactionForm()
 
-    income_entries = Income.objects.filter(date__range=(first_day, last_day)).select_related("income_category", "bank_account")
-    expense_entries = Expense.objects.filter(date__range=(first_day, last_day)).select_related("category", "bank_account")
+    income_entries = Income.objects.filter(date__range=(first_day, last_day)).select_related(
+        "income_category",
+        "bank_account",
+    )
+
+    expense_entries = (
+        Expense.objects
+        .filter(date__range=(first_day, last_day))
+        .select_related("category", "bank_account", "rental_unit", "cra_category")
+        .annotate(attachment_count=Count("attachments", distinct=True))
+    )
 
     total_income = sum(i.amount for i in income_entries)
     total_expenses = sum(e.amount for e in expense_entries)
@@ -298,10 +423,18 @@ def dashboard(request):
         "category_summaries": category_summaries,
         "accounts": accounts,
         "income_categories": IncomeCategory.objects.all().order_by("name"),
+
+        # ✅ NEW: needed for dashboard expense modal + add-transaction dropdowns
+        "all_rental_units": RentalUnit.objects.select_related("property").order_by("property__name", "name"),
+        "cra_categories": CRARentalExpenseCategory.objects.filter(is_active=True).order_by("sort_order", "name"),
+        "income_source_default_unit_map": {
+            str(c.id): (c.default_rental_unit_id or "")
+            for c in IncomeCategory.objects.all()
+        },
+
     }
 
     return render(request, "dashboard.html", context)
-
 
 def category_progress(request):
     today = date.today()
@@ -315,7 +448,6 @@ def category_progress(request):
     last_day = date(year, month, monthrange(year, month)[1])
     selected_month_display = first_day.strftime("%B %Y")
 
-    # Expense progress
     categories_with_targets = Category.objects.exclude(monthly_limit__isnull=True)
 
     expense_summaries = []
@@ -342,7 +474,6 @@ def category_progress(request):
             "bar_class": bar_class,
         })
 
-    # Income progress
     income_categories = IncomeCategory.objects.all()
 
     income_summaries = []
@@ -386,14 +517,9 @@ def category_progress(request):
     }
     return render(request, "category_progress.html", context)
 
-
 def category_expense_list(request, category_name):
-    """
-    Expense drilldown: show expense transactions for a Category across a selectable date range,
-    with monthly totals and a chart-friendly series.
-    """
     selected_month_str = request.GET.get("month")
-    range_key = request.GET.get("range", "6")  # default: last 6 months
+    range_key = request.GET.get("range", "6")
     today = date.today()
 
     try:
@@ -517,16 +643,9 @@ def category_expense_list(request, category_name):
     }
     return render(request, "category_expense_list.html", context)
 
-
-
-
 def income_category_income_list(request, pk):
-    """
-    Income drilldown: show income transactions for an IncomeCategory across a selectable date range,
-    with monthly totals and a chart-friendly series.
-    """
     selected_month_str = request.GET.get("month")
-    range_key = request.GET.get("range", "6")  # default: last 6 months
+    range_key = request.GET.get("range", "6")
     today = date.today()
 
     try:
@@ -588,7 +707,6 @@ def income_category_income_list(request, pk):
             month_starts.append(cur)
             cur = add_months(cur, 1)
 
-    # newest first for cards
     month_starts = list(reversed(month_starts))
 
     target = inc_cat.monthly_target or Decimal("0.00")
@@ -623,7 +741,6 @@ def income_category_income_list(request, pk):
         trend_labels.append(m.strftime("%b %Y"))
         trend_values.append(float(total))
 
-    # newest first in UI
     month_rows = list(reversed(month_rows))
 
     range_total = sum((r["total"] for r in month_rows), Decimal("0.00"))
@@ -651,42 +768,511 @@ def income_category_income_list(request, pk):
     }
     return render(request, "income_category_income_list.html", context)
 
+# -------------------------
+# Rental Properties Section
+# -------------------------
+
+def rental_properties(request):
+    """
+    List rental properties and show totals for selected month/range:
+      - total income
+      - total expenses
+      - net cashflow
+    """
+    selected_month_str = request.GET.get("month")
+    range_key = request.GET.get("range", "6")
+    today = date.today()
+
+    try:
+        year, month = map(int, (selected_month_str or "").split("-"))
+    except Exception:
+        year, month = today.year, today.month
+
+    anchor_month_start = date(year, month, 1)
+    anchor_month_end = date(year, month, monthrange(year, month)[1])
+
+    def add_months(d: date, delta_months: int) -> date:
+        y = d.year + (d.month - 1 + delta_months) // 12
+        m = (d.month - 1 + delta_months) % 12 + 1
+        return date(y, m, 1)
+
+    if range_key in ("3", "6", "12"):
+        n = int(range_key)
+        range_start = add_months(anchor_month_start, -(n - 1))
+        range_end = anchor_month_end
+
+    elif range_key == "ytd":
+        range_start = date(anchor_month_start.year, 1, 1)
+        range_end = anchor_month_end
+
+    elif range_key == "prev_year":
+        prev_year = anchor_month_start.year - 1
+        range_start = date(prev_year, 1, 1)
+        range_end = date(prev_year, 12, 31)
+
+    elif range_key == "all":
+        earliest_income = (
+            Income.objects.filter(rental_unit__isnull=False)
+            .order_by("date")
+            .values_list("date", flat=True)
+            .first()
+        )
+        earliest_expense = (
+            Expense.objects.filter(rental_unit__isnull=False)
+            .order_by("date")
+            .values_list("date", flat=True)
+            .first()
+        )
+
+        earliest = earliest_income or earliest_expense
+        if earliest_income and earliest_expense:
+            earliest = min(earliest_income, earliest_expense)
+
+        range_start = date(earliest.year, earliest.month, 1) if earliest else anchor_month_start
+        range_end = anchor_month_end
+
+    else:
+        range_start = add_months(anchor_month_start, -5)
+        range_end = anchor_month_end
+
+    range_options = [
+        ("3", "Last 3 months"),
+        ("6", "Last 6 months"),
+        ("12", "Last 12 months"),
+        ("ytd", "Year to date"),
+        ("prev_year", "Previous year"),
+        ("all", "All time"),
+    ]
+
+    properties = RentalProperty.objects.filter(is_active=True).order_by("name")
+
+    rows = []
+    for prop in properties:
+        income_total = (
+            Income.objects.filter(rental_unit__property=prop, date__range=(range_start, range_end))
+            .aggregate(total=Sum("amount"))["total"]
+            or Decimal("0.00")
+        )
+
+        expense_total = (
+            Expense.objects.filter(rental_unit__property=prop, date__range=(range_start, range_end))
+            .aggregate(total=Sum("amount"))["total"]
+            or Decimal("0.00")
+        )
+
+        net = income_total - expense_total
+
+        rows.append({
+            "property": prop,
+            "income_total": income_total,
+            "expense_total": expense_total,
+            "net_total": net,
+        })
+
+    context = {
+        "rows": rows,
+        "selected_month": f"{year:04d}-{month:02d}",
+        "selected_range": range_key,
+        "range_options": range_options,
+        "range_start": range_start,
+        "range_end": range_end,
+    }
+    return render(request, "rental_properties.html", context)
+
+def rental_property_detail(request, property_id):
+    selected_month_str = request.GET.get("month")
+    range_key = request.GET.get("range", "6")
+    today = date.today()
+
+    try:
+        year, month = map(int, (selected_month_str or "").split("-"))
+    except Exception:
+        year, month = today.year, today.month
+
+    prop = get_object_or_404(RentalProperty, pk=property_id)
+
+    anchor_month_start = date(year, month, 1)
+
+    def add_months(d: date, delta_months: int) -> date:
+        y = d.year + (d.month - 1 + delta_months) // 12
+        m = (d.month - 1 + delta_months) % 12 + 1
+        return date(y, m, 1)
+
+    month_starts = []
+
+    if range_key in ("3", "6", "12"):
+        n = int(range_key)
+        start = add_months(anchor_month_start, -(n - 1))
+        cur = start
+        while cur <= anchor_month_start:
+            month_starts.append(cur)
+            cur = add_months(cur, 1)
+
+    elif range_key == "ytd":
+        start = date(anchor_month_start.year, 1, 1)
+        cur = start
+        while cur <= anchor_month_start:
+            month_starts.append(cur)
+            cur = add_months(cur, 1)
+
+    elif range_key == "prev_year":
+        prev_year = anchor_month_start.year - 1
+        cur = date(prev_year, 1, 1)
+        end = date(prev_year, 12, 1)
+        while cur <= end:
+            month_starts.append(cur)
+            cur = add_months(cur, 1)
+
+    elif range_key == "all":
+        earliest_income = (
+            Income.objects.filter(rental_unit__property=prop)
+            .order_by("date")
+            .values_list("date", flat=True)
+            .first()
+        )
+        earliest_expense = (
+            Expense.objects.filter(rental_unit__property=prop)
+            .order_by("date")
+            .values_list("date", flat=True)
+            .first()
+        )
+
+        earliest = earliest_income or earliest_expense
+        if earliest_income and earliest_expense:
+            earliest = min(earliest_income, earliest_expense)
+
+        start = date(earliest.year, earliest.month, 1) if earliest else anchor_month_start
+
+        cur = start
+        while cur <= anchor_month_start:
+            month_starts.append(cur)
+            cur = add_months(cur, 1)
+
+    else:
+        start = add_months(anchor_month_start, -5)
+        cur = start
+        while cur <= anchor_month_start:
+            month_starts.append(cur)
+            cur = add_months(cur, 1)
+
+    month_starts = list(reversed(month_starts))
+
+    month_rows = []
+    trend_labels = []
+    trend_income = []
+    trend_expenses = []
+    trend_net = []
+
+    month_starts_chrono = list(reversed(month_starts))
+
+    for m in month_starts_chrono:
+        start = date(m.year, m.month, 1)
+        end = date(m.year, m.month, monthrange(m.year, m.month)[1])
+
+        incomes_qs = (
+            Income.objects
+            .filter(rental_unit__property=prop, date__range=(start, end))
+            .select_related("bank_account", "rental_unit", "income_category")
+            .order_by("-date", "-id")
+        )
+        expenses_qs = (
+            Expense.objects
+            .filter(rental_unit__property=prop, date__range=(start, end))
+            .select_related("bank_account", "rental_unit", "category", "cra_category")
+            .order_by("-date", "-id")
+        )
+
+        income_total = incomes_qs.aggregate(total=Sum("amount"))["total"] or Decimal("0.00")
+        expense_total = expenses_qs.aggregate(total=Sum("amount"))["total"] or Decimal("0.00")
+        net_total = income_total - expense_total
+
+        month_rows.append({
+            "month": m,
+            "incomes": incomes_qs,
+            "expenses": expenses_qs,
+            "income_total": income_total,
+            "expense_total": expense_total,
+            "net_total": net_total,
+        })
+
+        trend_labels.append(m.strftime("%b %Y"))
+        trend_income.append(float(income_total))
+        trend_expenses.append(float(expense_total))
+        trend_net.append(float(net_total))
+
+    month_rows = list(reversed(month_rows))
+
+    range_income_total = sum((r["income_total"] for r in month_rows), Decimal("0.00"))
+    range_expense_total = sum((r["expense_total"] for r in month_rows), Decimal("0.00"))
+    range_net_total = range_income_total - range_expense_total
+
+    range_options = [
+        ("3", "Last 3 months"),
+        ("6", "Last 6 months"),
+        ("12", "Last 12 months"),
+        ("ytd", "Year to date"),
+        ("prev_year", "Previous year"),
+        ("all", "All time"),
+    ]
+
+    context = {
+        "property": prop,
+        "selected_month": f"{year:04d}-{month:02d}",
+        "selected_range": range_key,
+        "range_options": range_options,
+        "month_rows": month_rows,
+        "trend_labels": trend_labels,
+        "trend_income": trend_income,
+        "trend_expenses": trend_expenses,
+        "trend_net": trend_net,
+        "range_income_total": range_income_total,
+        "range_expense_total": range_expense_total,
+        "range_net_total": range_net_total,
+    }
+    return render(request, "rental_property_detail.html", context)
+
+def rental_tax_summary(request, property_id):
+    """
+    Tax Summary (per property, per year) in a CRA-ish layout:
+      - Income: gross rents (all units), unit count (excludes Shared/Common)
+      - Expenses: list ALL CRA categories (even if $0)
+      - For each CRA category:
+          Total expenses (raw)
+          Personal portion (raw - rental portion)
+          Rental portion (after rental_business_use_pct; default 100%)
+      - Drilldown link per CRA category
+    """
+    prop = get_object_or_404(RentalProperty, pk=property_id)
+
+    # ---- Year dropdown options (earliest -> current) ----
+    current_year = date.today().year
+
+    earliest_expense = (
+        Expense.objects
+        .filter(rental_unit__property=prop)
+        .order_by("date")
+        .values_list("date", flat=True)
+        .first()
+    )
+    earliest_income = (
+        Income.objects
+        .filter(rental_unit__property=prop)
+        .order_by("date")
+        .values_list("date", flat=True)
+        .first()
+    )
+
+    earliest = earliest_expense or earliest_income
+    if earliest_expense and earliest_income:
+        earliest = min(earliest_expense, earliest_income)
+
+    start_year = earliest.year if earliest else current_year
+    year_options = list(range(start_year, current_year + 1))
+
+    try:
+        year = int(request.GET.get("year") or current_year)
+    except ValueError:
+        year = current_year
+
+    if year not in year_options:
+        year_options.append(year)
+        year_options = sorted(set(year_options))
+
+    # ---- Unit count (exclude Shared/Common units) ----
+    units_qs = RentalUnit.objects.filter(property=prop, is_active=True)
+    # simple "smart enough" heuristic
+    rentable_units = units_qs.exclude(name__icontains="shared").exclude(name__icontains="common")
+    unit_count = rentable_units.count()
+
+    # ---- Income: gross rents for all units (we ignore short-term rentals) ----
+    # We assume rental incomes are already tagged with rental_unit.
+    income_total = (
+        Income.objects
+        .filter(rental_unit__property=prop, date__year=year)
+        .aggregate(total=Sum("amount"))["total"]
+        or Decimal("0.00")
+    )
+
+    # ---- Expenses: only those with CRA category set (for summary table) ----
+    expense_qs = (
+        Expense.objects
+        .filter(
+            date__year=year,
+            rental_unit__property=prop,
+            cra_category__isnull=False,
+        )
+        .select_related("cra_category", "rental_unit")
+    )
+
+    # Rental %: default 100 if null
+    pct = Case(
+        When(rental_business_use_pct__isnull=False, then=F("rental_business_use_pct")),
+        default=Value(100),
+        output_field=DecimalField(max_digits=5, decimal_places=2),
+    )
+
+    rental_portion_expr = ExpressionWrapper(
+        F("amount") * pct / Value(100),
+        output_field=DecimalField(max_digits=12, decimal_places=2),
+    )
+
+    personal_portion_expr = ExpressionWrapper(
+        F("amount") - (F("amount") * pct / Value(100)),
+        output_field=DecimalField(max_digits=12, decimal_places=2),
+    )
+
+    # Aggregate by CRA category id so we can join to the full category list (including zeros)
+    aggregates = (
+        expense_qs.values("cra_category_id")
+        .annotate(
+            total_raw=Sum("amount"),
+            total_rental=Sum(rental_portion_expr),
+            total_personal=Sum(personal_portion_expr),
+        )
+    )
+
+    agg_map = {
+        row["cra_category_id"]: row
+        for row in aggregates
+    }
+
+    # ---- Build rows for ALL CRA categories (even if zero) ----
+    cra_categories = list(
+        CRARentalExpenseCategory.objects
+        .filter(is_active=True)
+        .order_by("sort_order", "name")
+    )
+
+    rows = []
+    total_expenses_raw = Decimal("0.00")
+    total_expenses_rental = Decimal("0.00")
+    total_expenses_personal = Decimal("0.00")
+
+    for cat in cra_categories:
+        data = agg_map.get(cat.id) or {}
+        raw = data.get("total_raw") or Decimal("0.00")
+        rental = data.get("total_rental") or Decimal("0.00")
+        personal = data.get("total_personal") or Decimal("0.00")
+
+        total_expenses_raw += raw
+        total_expenses_rental += rental
+        total_expenses_personal += personal
+
+        rows.append({
+            "cat": cat,
+            "total_raw": raw,
+            "total_rental": rental,
+            "total_personal": personal,
+        })
+
+    # How many expenses are missing CRA category (for cleanup)
+    missing_cra_count = (
+        Expense.objects
+        .filter(date__year=year, rental_unit__property=prop, cra_category__isnull=True)
+        .count()
+    )
+    missing_cra_expenses = (
+        Expense.objects
+        .filter(
+            rental_unit__property=prop,
+            date__year=year,
+            cra_category__isnull=True,
+        )
+        .select_related("category", "rental_unit", "bank_account")
+        .order_by("-date", "-id")
+    )
+    missing_cra_count = missing_cra_expenses.count()
+
+    context = {
+        "property": prop,
+        "year": year,
+        "year_options": year_options,
+        "unit_count": unit_count,
+        "income_total": income_total,
+        "rows": rows,
+        "total_expenses_raw": total_expenses_raw,
+        "total_expenses_rental": total_expenses_rental,
+        "total_expenses_personal": total_expenses_personal,
+        "missing_cra_count": missing_cra_count,
+        "missing_cra_expenses": missing_cra_expenses,
+    }
+    return render(request, "rental_tax_summary.html", context)
+
+def rental_tax_category_detail(request, property_id, cra_category_id):
+    prop = get_object_or_404(RentalProperty, pk=property_id)
+    cra_cat = get_object_or_404(CRARentalExpenseCategory, pk=cra_category_id)
+
+    try:
+        year = int(request.GET.get("year") or date.today().year)
+    except ValueError:
+        year = date.today().year
+
+    qs = (
+        Expense.objects
+        .filter(
+            rental_unit__property=prop,
+            date__year=year,
+            cra_category=cra_cat,
+        )
+        .select_related("rental_unit", "category", "bank_account")
+        .order_by("-date", "-id")
+    )
+
+    pct = Case(
+        When(rental_business_use_pct__isnull=False, then=F("rental_business_use_pct")),
+        default=Value(100),
+        output_field=DecimalField(max_digits=5, decimal_places=2),
+    )
+
+    rental_portion_expr = ExpressionWrapper(
+        F("amount") * pct / Value(100),
+        output_field=DecimalField(max_digits=12, decimal_places=2),
+    )
+    personal_portion_expr = ExpressionWrapper(
+        F("amount") - (F("amount") * pct / Value(100)),
+        output_field=DecimalField(max_digits=12, decimal_places=2),
+    )
+
+    qs = qs.annotate(
+        rental_portion=rental_portion_expr,
+        personal_portion=personal_portion_expr,
+    )
+
+    context = {
+        "property": prop,
+        "cra_category": cra_cat,
+        "year": year,
+        "expenses": qs,
+    }
+    return render(request, "rental_tax_category_detail.html", context)
 
 
-
+# -------------------------
+# Categories + Accounts (unchanged)
+# -------------------------
 
 class CategoryForm(ModelForm):
     class Meta:
         model = Category
         fields = ["name", "monthly_limit", "savings_target_per_paycheque"]
 
-
 class CategoryForm(ModelForm):
     class Meta:
         model = Category
         fields = ["name", "monthly_limit", "savings_target_per_paycheque"]
-
 
 class IncomeCategoryForm(ModelForm):
     class Meta:
         model = IncomeCategory
         fields = ["name", "monthly_target", "taxable_default"]
 
-
 def category_list(request):
-    """
-    Unified Manage Categories page:
-      - Expense categories (Category)
-      - Income categories (IncomeCategory)
-    Both are editable via modal and deletable.
-    """
     expense_categories = Category.objects.all().order_by("name")
     income_categories = IncomeCategory.objects.all().order_by("name")
 
     if request.method == "POST":
         action = request.POST.get("action")
 
-        # ---------- EXPENSE ----------
         if action == "expense_delete":
             cat = get_object_or_404(Category, pk=request.POST.get("id"))
             cat.delete()
@@ -705,9 +1291,7 @@ def category_list(request):
                     messages.error(request, "An expense category with that name already exists.")
             else:
                 messages.error(request, "Please correct the errors in the expense category form.")
-            # fall through to render page with errors
 
-        # ---------- INCOME ----------
         if action == "income_delete":
             inc = get_object_or_404(IncomeCategory, pk=request.POST.get("id"))
             inc.delete()
@@ -726,9 +1310,7 @@ def category_list(request):
                     messages.error(request, "An income category with that name already exists.")
             else:
                 messages.error(request, "Please correct the errors in the income category form.")
-            # fall through to render page with errors
 
-    # GET (or failed POST)
     expense_form = CategoryForm()
     income_form = IncomeCategoryForm()
 
@@ -738,7 +1320,6 @@ def category_list(request):
         "expense_form": expense_form,
         "income_form": income_form,
     })
-
 
 class BankAccountForm(ModelForm):
     class Meta:
@@ -752,7 +1333,6 @@ class BankAccountForm(ModelForm):
             "current_balance",
             "is_active",
         ]
-
 
 def bank_accounts(request):
     accounts = BankAccount.objects.all().order_by("name")
@@ -780,7 +1360,6 @@ def bank_accounts(request):
 
     return render(request, "bank_accounts.html", {"accounts": accounts, "form": form})
 
-
 def import_batch_detail(request, batch_id):
     batch = get_object_or_404(ImportBatch, pk=batch_id)
     expenses = Expense.objects.filter(import_batch=batch).order_by("-date")
@@ -792,12 +1371,13 @@ def import_batch_detail(request, batch_id):
         "incomes": incomes,
     })
 
-
 @require_http_methods(["GET", "POST"])
 def import_transactions(request):
     if request.method == "GET":
         upload_form = CSVUploadForm()
         recent_batches = ImportBatch.objects.select_related("bank_account").all()[:10]
+
+
         return render(request, "import_transactions.html", {
             "step": "upload",
             "upload_form": upload_form,
@@ -836,6 +1416,7 @@ def import_transactions(request):
         latest_date_in_file = None
 
         income_cat_cache = {c.name: c for c in IncomeCategory.objects.all()}
+        arnprior_shared_unit_id = get_arnprior_shared_unit_id()
 
         for row in reader:
             if not row or all(not cell.strip() for cell in row):
@@ -893,7 +1474,8 @@ def import_transactions(request):
 
             amount = abs(amount)
 
-            entry_type, income_source_name = apply_income_rules(desc_upper, amount, entry_type_default)
+            entry_type, income_source_name = apply_income_rules(desc_upper, amount, entry_type_default, parsed_date=parsed_date)
+
 
             income_source_obj = None
             if entry_type == "income" and income_source_name:
@@ -909,6 +1491,12 @@ def import_transactions(request):
             if "HYDRO ONE" in desc_upper and entry_type == "expense":
                 hydro_candidates.append((len(initial_rows), amount))
 
+            expense_rental_unit_id = None
+            if entry_type == "expense" and expense_category and arnprior_shared_unit_id:
+                # Heuristic: any auto-mapped expense category containing "Arnprior" => Arnprior shared/common unit
+                if "ARNPRIOR" in (expense_category.name or "").upper():
+                    expense_rental_unit_id = arnprior_shared_unit_id
+
             initial_rows.append({
                 "entry_type": entry_type,
                 "date": parsed_date,
@@ -918,9 +1506,12 @@ def import_transactions(request):
                 "notes": "",
                 "expense_category": expense_category,
                 "income_source": income_source_obj,
+                "income_rental_unit": (
+                    income_source_obj.default_rental_unit_id if income_source_obj and income_source_obj.default_rental_unit_id else None),
                 "apply_to_withholding": False,
                 "is_withholding_payout": False,
                 "withholding_category": None,
+                "expense_rental_unit": expense_rental_unit_id,
             })
 
         if bank_account and earliest_date_in_file and latest_date_in_file:
@@ -962,7 +1553,7 @@ def import_transactions(request):
             return render(request, "import_transactions.html", {
                 "step": "upload",
                 "upload_form": upload_form,
-                "recent_batches": recent_batches,
+                "recent_batches": ImportBatch.objects.select_related("bank_account").all()[:10],
             })
 
         if missing_categories:
@@ -973,11 +1564,14 @@ def import_transactions(request):
             )
 
         formset = TransactionImportFormSet(initial=initial_rows)
+        income_rental_unit_map = build_income_rental_unit_map()
+
         return render(request, "import_transactions.html", {
             "step": "review",
             "formset": formset,
             "selected_bank_account": bank_account,
             "uploaded_filename": uploaded_filename,
+            "income_rental_unit_map": income_rental_unit_map,
         })
 
     if step == "review":
@@ -995,11 +1589,15 @@ def import_transactions(request):
 
         if not formset.is_valid():
             messages.error(request, "There were errors in the form. Please correct them.")
+            income_rental_unit_map = build_income_rental_unit_map()
+
+
             return render(request, "import_transactions.html", {
                 "step": "review",
                 "formset": formset,
                 "selected_bank_account": bank_account,
                 "uploaded_filename": uploaded_filename,
+                "income_rental_unit_map": income_rental_unit_map,  # ✅ add this
             })
 
         created_expenses = 0
@@ -1034,7 +1632,7 @@ def import_transactions(request):
             notes = cd.get("notes")
             expense_category = cd.get("expense_category")
             income_source = cd.get("income_source")
-
+            income_rental_unit = cd.get("income_rental_unit")
             apply_to_withholding = cd.get("apply_to_withholding")
             is_withholding_payout = cd.get("is_withholding_payout")
             withholding_category = cd.get("withholding_category")
@@ -1119,11 +1717,18 @@ def import_transactions(request):
                     date=date_val,
                     amount=amount,
                     income_category=income_source,
-                    category=income_source.name,  # legacy sync for now
+                    category=income_source.name,
                     taxable=income_source.taxable_default,
                     notes=notes or "",
                     bank_account=bank_account,
                 )
+
+                # If user selected an override, use it; otherwise fall back to the IncomeCategory default
+                if income_rental_unit:
+                    inc.rental_unit = income_rental_unit
+                elif income_source and income_source.default_rental_unit_id:
+                    inc.rental_unit = income_source.default_rental_unit
+
                 income_objs.append(inc)
                 total_income_amount += amount
                 created_incomes += 1
@@ -1173,9 +1778,12 @@ def import_transactions(request):
         "recent_batches": recent_batches,
     })
 
-
 @csrf_exempt
 def update_expense(request):
+    """
+    Legacy endpoint still referenced in urls.py.
+    Keep it working (and updated) even if the dashboard modal is the main flow.
+    """
     if request.method != "POST":
         return HttpResponseBadRequest("Invalid method")
 
@@ -1193,12 +1801,22 @@ def update_expense(request):
         expense.category = get_object_or_404(Category, id=request.POST.get("category_id"))
         expense.location = request.POST.get("location", "Ottawa")
         expense.amount = request.POST.get("amount")
-        expense.notes = request.POST.get("notes")
+        expense.notes = request.POST.get("notes", "")
+
+        # ✅ Optional rental fields if caller sends them
+        rental_unit_id = (request.POST.get("rental_unit") or "").strip()
+        expense.rental_unit = get_object_or_404(RentalUnit, pk=rental_unit_id) if rental_unit_id else None
+
+        cra_category_id = (request.POST.get("cra_category") or "").strip()
+        expense.cra_category = get_object_or_404(CRARentalExpenseCategory, pk=cra_category_id) if cra_category_id else None
+
+        pct_str = (request.POST.get("rental_business_use_pct") or "").strip()
+        expense.rental_business_use_pct = Decimal(pct_str) if pct_str else None
+
         expense.save()
 
     selected_month = request.GET.get("month") or expense.date.strftime("%Y-%m")
     return redirect(f"/?month={selected_month}")
-
 
 def withholding_overview(request):
     accounts = (
@@ -1207,7 +1825,6 @@ def withholding_overview(request):
         .prefetch_related("withholding_categories__transactions")
     )
     return render(request, "withholding_overview.html", {"accounts": accounts})
-
 
 def withholding_category_detail(request, pk):
     category = get_object_or_404(
@@ -1223,7 +1840,6 @@ def withholding_category_detail(request, pk):
         running_balance -= tx.amount
 
     return render(request, "withholding_category_detail.html", {"category": category, "rows": rows})
-
 
 @require_POST
 def update_withholding_transaction(request, pk):
@@ -1255,3 +1871,64 @@ def update_withholding_transaction(request, pk):
     tx.save()
 
     return redirect("withholding_category_detail", pk=category_pk)
+
+@require_http_methods(["GET", "POST"])
+def expense_edit(request, expense_id):
+    expense = get_object_or_404(
+        Expense.objects.select_related("category", "bank_account", "rental_unit", "cra_category"),
+        pk=expense_id
+    )
+
+    if request.method == "POST":
+        # Delete attachment
+        delete_attachment_id = request.POST.get("delete_attachment_id")
+        if delete_attachment_id:
+            att = get_object_or_404(ExpenseAttachment, pk=delete_attachment_id, expense=expense)
+            if att.file:
+                att.file.delete(save=False)
+            att.delete()
+            messages.success(request, "Attachment deleted.")
+            return redirect("expense_edit", expense_id=expense.id)
+
+        form = ExpenseEditForm(request.POST, instance=expense)
+
+        # IMPORTANT: do uploads directly from request.FILES
+        files = request.FILES.getlist("files")
+        print("FILES KEYS:", list(request.FILES.keys()))
+        print("FILES COUNT:", len(files))
+
+        if form.is_valid():
+            form.save()
+
+            created = 0
+            for f in files:
+                # skip empty placeholders (some browsers can submit empties)
+                if not f:
+                    continue
+                ExpenseAttachment.objects.create(
+                    expense=expense,
+                    file=f,
+                    original_name=getattr(f, "name", "") or "",
+                )
+                created += 1
+
+            if created:
+                messages.success(request, f"Saved expense and uploaded {created} attachment(s).")
+            else:
+                messages.success(request, "Saved expense (no attachments uploaded).")
+
+            return redirect("expense_edit", expense_id=expense.id)
+
+        # If the expense form is invalid, show errors (and keep user on page)
+        messages.error(request, "Please correct the errors below.")
+    else:
+        form = ExpenseEditForm(instance=expense)
+
+    attachments = expense.attachments.all()
+
+    return render(request, "expense_edit.html", {
+        "expense": expense,
+        "form": form,
+        "attachments": attachments,
+    })
+

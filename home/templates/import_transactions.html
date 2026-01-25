@@ -211,8 +211,8 @@
                     <th>Vendor</th>
                     <th>Amount</th>
                     <th>Category (Expense/Income)</th>
+                    <th>Rental Unit</th>
                     <th>Withholding</th>
-                    <th>Location</th>
                     <th>Notes</th>
                     <th style="width: 120px;">Actions</th>
                 </tr>
@@ -238,37 +238,44 @@
                         </td>
 
                         <td class="category-col">
-                            <div class="expense-wrapper">
-                                {{ form.expense_category }}
-                            </div>
-                            <div class="income-wrapper">
-                                {{ form.income_source }}
-                            </div>
-                        </td>
+                        <div class="expense-wrapper">
+                            {{ form.expense_category }}
+                        </div>
+                        <div class="income-wrapper">
+                            {{ form.income_source }}
+                        </div>
+                    </td>
 
-                        <td class="withholding-col">
-                            <div class="small mb-1">
-                                <div class="form-check">
-                                    {{ form.apply_to_withholding }}
-                                    <label class="form-check-label small">
-                                        Contribution
-                                    </label>
-                                </div>
-                                <div class="form-check">
-                                    {{ form.is_withholding_payout }}
-                                    <label class="form-check-label small">
-                                        Payout (no expense)
-                                    </label>
-                                </div>
-                            </div>
-                            <div class="small">
-                                {{ form.withholding_category }}
-                            </div>
-                        </td>
+                    <td class="rental-unit-col">
+                      <div class="expense-rental-wrapper">
+                        {{ form.expense_rental_unit }}
+                      </div>
+                      <div class="income-rental-wrapper">
+                        {{ form.income_rental_unit }}
+                      </div>
+                    </td>
 
-                        <td>{{ form.location }}</td>
-                        <td>{{ form.notes }}</td>
+                    <td class="withholding-col">
+                        <div class="small mb-1">
+                            <div class="form-check">
+                                {{ form.apply_to_withholding }}
+                                <label class="form-check-label small">
+                                    Contribution
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                {{ form.is_withholding_payout }}
+                                <label class="form-check-label small">
+                                    Payout (no expense)
+                                </label>
+                            </div>
+                        </div>
+                        <div class="small">
+                            {{ form.withholding_category }}
+                        </div>
+                    </td>
 
+                    <td>{{ form.notes }}</td>
                         <td>
                             <div class="d-flex flex-column gap-1">
                                 <button type="button" class="btn btn-sm btn-outline-secondary split-btn">
@@ -282,6 +289,8 @@
                             {{ form.skip }}
                             {{ form.split_group_id }}
                             {{ form.is_split_child }}
+                            {{ form.location.as_hidden }}
+
                         </td>
                     </tr>
                 {% endfor %}
@@ -305,11 +314,13 @@
                 Cancel
             </a>
         </form>
-
+        {{ income_rental_unit_map|json_script:"income-rental-unit-map" }}
         <script>
             document.addEventListener("DOMContentLoaded", function () {
                 const tbody = document.querySelector("#import-table tbody");
                 const totalFormsInput = document.querySelector('input[name="form-TOTAL_FORMS"]');
+                const incomeRentalUnitMap = JSON.parse(document.getElementById("income-rental-unit-map").textContent || "{}");
+
 
                 function getFormIndexFromRow(row) {
                     const anyField = row.querySelector("input[name^='form-'], select[name^='form-'], textarea[name^='form-']");
@@ -325,6 +336,18 @@
                     if (!typeSelect || !expenseWrapper || !incomeWrapper) return;
 
                     const isIncome = typeSelect.value === "income";
+
+                    const expRental = row.querySelector(".expense-rental-wrapper");
+                    const incRental = row.querySelector(".income-rental-wrapper");
+                    if (expRental && incRental) {
+                        if (isIncome) {
+                            expRental.style.display = "none";
+                            incRental.style.display = "";
+                        } else {
+                            expRental.style.display = "";
+                            incRental.style.display = "none";
+                        }
+                    }
                     if (isIncome) {
                         expenseWrapper.style.display = "none";
                         incomeWrapper.style.display = "";
@@ -338,8 +361,10 @@
                     const typeSelect = row.querySelector("select[name$='entry_type']");
                     const whCol = row.querySelector(".withholding-col");
                     if (!typeSelect || !whCol) return;
+
                     const isExpense = typeSelect.value === "expense";
-                    whCol.style.display = isExpense ? "" : "none";
+                    whCol.style.visibility = isExpense ? "visible" : "hidden";
+                    whCol.style.pointerEvents = isExpense ? "" : "none";
                 }
 
                 function getSplitGroupId(row) {
@@ -488,6 +513,7 @@
                     label.textContent = text;
                 }
 
+
                 function initRow(row) {
                     const typeSelect = row.querySelector("select[name$='entry_type']");
                     const skipBtn = row.querySelector(".skip-btn");
@@ -501,11 +527,13 @@
                         updateCategoryVisibility(row);
                         updateWithholdingVisibility(row);
                         typeSelect.addEventListener("change", function () {
-                            updateCategoryVisibility(row);
-                            updateWithholdingVisibility(row);
-                            row.dataset.userChanged = "1";
-                            applyRowColor(row);
-                        });
+                        updateCategoryVisibility(row);
+                        updateWithholdingVisibility(row);
+
+                        row.dataset.userChanged = "1";
+                        applyRowColor(row);
+                    });
+
                     }
 
                     const markChangedAndRecolor = () => {
@@ -519,9 +547,13 @@
                     }
 
                     if (incomeSelect) {
-                        incomeSelect.addEventListener("change", markChangedAndRecolor);
-                        incomeSelect.addEventListener("click", markChangedAndRecolor);
-                    }
+                    incomeSelect.addEventListener("change", () => {
+                        markChangedAndRecolor();
+
+                    });
+                    incomeSelect.addEventListener("click", markChangedAndRecolor);
+                }
+
 
                     if (skipBtn && skipInput) {
                         skipBtn.addEventListener("click", () => {
@@ -545,6 +577,8 @@
 
                     applyRowColor(row);
                     updateWithholdingVisibility(row);
+
+
                 }
 
                 function splitRow(row) {

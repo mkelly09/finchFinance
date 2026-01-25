@@ -7,7 +7,9 @@ from .models import (
     WithholdingTransaction,
     ImportBatch,
     Expense,
+    ExpenseAttachment,
     Income,
+
 )
 
 
@@ -147,3 +149,9 @@ class IncomeAdmin(admin.ModelAdmin):
     list_filter = ("category", "taxable", "bank_account", "date")
     search_fields = ("notes",)
     ordering = ("-date",)
+
+@admin.register(ExpenseAttachment)
+class ExpenseAttachmentAdmin(admin.ModelAdmin):
+    list_display = ("id", "expense", "original_name", "uploaded_at")
+    list_filter = ("uploaded_at",)
+    search_fields = ("original_name", "expense__vendor_name")
