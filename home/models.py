@@ -1,9 +1,10 @@
 from django.db import models
 from django.db.models import Sum
 from django.db.models.functions import Coalesce
-from datetime import date as dt_date
+from datetime import date as dt_date, timedelta
 from decimal import Decimal
 from django.db.models import SET_NULL
+
 
 
 
@@ -371,11 +372,501 @@ class RentalProperty(models.Model):
     notes = models.TextField(blank=True, default="")
     is_active = models.BooleanField(default=True)
 
+    # Estimated market value for equity / LTV
+    estimated_value = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Current estimated market value for this property.",
+    )
+    last_valued_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Date this estimated value was last updated.",
+    )
+
     class Meta:
         ordering = ["name"]
 
     def __str__(self):
         return self.name
+
+    @property
+    def total_mortgage_balance(self):
+        """
+        Sum of current principal balances across active mortgages for this property.
+        """
+        total = Decimal("0.00")
+        any_balance = False
+        for m in self.mortgages.filter(is_active=True):
+            bal = m.current_principal_balance
+            if bal is not None:
+                total += bal
+                any_balance = True
+        return total if any_balance else None
+
+    @property
+    def equity(self):
+        """
+        Property equity = estimated_value - total_mortgage_balance, if both are known.
+        """
+        if self.estimated_value is None:
+            return None
+        total_mortgage = self.total_mortgage_balance
+        if total_mortgage is None:
+            return None
+        return self.estimated_value - total_mortgage
+
+    @property
+    def ltv_pct(self):
+        """
+        Loan-to-value ratio in percent (0–100+) if both value and mortgage balance are known.
+        """
+        if self.estimated_value is None or self.estimated_value <= 0:
+            return None
+        total_mortgage = self.total_mortgage_balance
+        if total_mortgage is None:
+            return None
+        return (total_mortgage / self.estimated_value) * Decimal("100.0")
+
+
+
+class MortgagePaymentFrequency(models.TextChoices):
+    MONTHLY = "MONTHLY", "Monthly"
+    BIWEEKLY = "BIWEEKLY", "Biweekly"
+    ACCELERATED_BIWEEKLY = "ACCEL_BIWEEKLY", "Accelerated biweekly"
+    WEEKLY = "WEEKLY", "Weekly"
+
+
+class MortgageCompoundingFrequency(models.TextChoices):
+    SEMI_ANNUAL = "SEMI_ANNUAL", "Semi-annual (Canadian standard)"
+    MONTHLY = "MONTHLY", "Monthly"
+    ANNUAL = "ANNUAL", "Annual"
+    OTHER = "OTHER", "Other / Unknown"
+
+
+class PropertyMortgage(models.Model):
+    """
+    Mortgage tied to an owned property (currently your RentalProperty model).
+
+    Design goals:
+    - Track where you started: original principal, origination date.
+    - Track where you started "proper tracking" in this app: tracking_start_principal/date.
+    - Compute current balance by subtracting principal-paid since tracking_start_date.
+    - Link explicit principal / prepayment / interest categories.
+    - Provide progress helpers for principal-based and time-based amortization.
+    """
+
+    owned_property = models.ForeignKey(
+        RentalProperty,
+        on_delete=models.CASCADE,
+        related_name="mortgages",
+    )
+
+    # Friendly identifiers
+    name = models.CharField(
+        max_length=100,
+        help_text="Short label, e.g. 'Scotia 5yr fixed' or 'TD Arnprior Mortgage'.",
+    )
+    lender_name = models.CharField(
+        max_length=100,
+        blank=True,
+        default="",
+        help_text="Optional: lender name (e.g. Scotiabank, TD).",
+    )
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Uncheck if this mortgage has been fully paid off or refinanced.",
+    )
+
+    # --- Original mortgage info (historical context) ---
+
+    original_principal = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Mortgage amount at origination (optional but recommended).",
+    )
+    origination_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Date the mortgage originally started.",
+    )
+
+    # --- Tracking start (for accurate ongoing balance in this app) ---
+
+    tracking_start_principal = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text=(
+            "Outstanding principal when you started tracking in this app. "
+            "Typically this should match your lender balance on the tracking start date."
+        ),
+    )
+    tracking_start_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Date that the tracking_start_principal corresponds to.",
+    )
+
+    manual_adjustment = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00"),
+        help_text=(
+            "Optional tweak to reconcile against lender balance if there are "
+            "small differences. Applied as: current = tracked - principal_paid + adjustment."
+        ),
+    )
+
+    # --- Amortization / schedule ---
+
+    amortization_years_total = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        help_text="Total amortization in years (e.g. 25).",
+    )
+    amortization_months_extra = models.PositiveSmallIntegerField(
+        default=0,
+        help_text="Extra months beyond whole years in the amortization (e.g. 6 for 25.5 years).",
+    )
+    amortization_start_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Start date for the amortization schedule (often the origination date).",
+    )
+
+    payment_frequency = models.CharField(
+        max_length=20,
+        choices=MortgagePaymentFrequency.choices,
+        default=MortgagePaymentFrequency.MONTHLY,
+        help_text="How often regular payments are made.",
+    )
+    regular_payment_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Contractual payment amount (principal + interest) per payment.",
+    )
+
+    # --- Interest rate & term ---
+
+    interest_rate_percent = models.DecimalField(
+        max_digits=5,
+        decimal_places=3,
+        null=True,
+        blank=True,
+        help_text="Current nominal annual interest rate (e.g. 5.490 means 5.490%).",
+    )
+    compounding_frequency = models.CharField(
+        max_length=20,
+        choices=MortgageCompoundingFrequency.choices,
+        default=MortgageCompoundingFrequency.OTHER,
+        help_text="Compounding convention (Canadian mortgages are usually semi-annual).",
+    )
+    interest_rate_effective_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Date this interest rate took effect (if known).",
+    )
+
+    term_start_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Start date of the current term.",
+    )
+    term_end_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="End date of the current term.",
+    )
+
+    # --- Category linkage (principal / prepayment / interest) ---
+
+    principal_category = models.ForeignKey(
+        Category,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="principal_mortgages",
+        help_text="Category used for the principal portion of regular mortgage payments.",
+    )
+    prepayment_category = models.ForeignKey(
+        Category,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="prepayment_mortgages",
+        help_text="Optional: category used for extra principal prepayments, if any.",
+    )
+    interest_category = models.ForeignKey(
+        Category,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="interest_mortgages",
+        help_text="Category used for the interest portion of mortgage payments.",
+    )
+
+    class Meta:
+        ordering = ["owned_property__name", "name"]
+
+    def __str__(self):
+        base = f"{self.owned_property.name} – {self.name}"
+        return base
+
+    # ----- Helper methods / properties -----
+
+    def principal_categories(self):
+        """
+        Categories that count as principal reduction for this mortgage:
+        - Regular principal category (required for live tracking)
+        - Optional prepayment category
+        """
+        cats = []
+        if self.principal_category_id:
+            cats.append(self.principal_category)
+        if self.prepayment_category_id:
+            cats.append(self.prepayment_category)
+        return cats
+
+    def _principal_queryset_since_tracking_start(self):
+        """
+        Internal helper: Expense queryset for principal-like categories
+        since the tracking_start_date. Returns an empty queryset if we
+        don't have enough configuration yet.
+        """
+        if not self.tracking_start_date:
+            return Expense.objects.none()
+        cats = self.principal_categories()
+        if not cats:
+            return Expense.objects.none()
+        return Expense.objects.filter(
+            category__in=cats,
+            date__gte=self.tracking_start_date,
+        )
+
+    @property
+    def principal_paid_since_tracking_start(self) -> Decimal:
+        """
+        Total principal paid since tracking_start_date, based on:
+        - principal_category
+        - prepayment_category (if set)
+        """
+        qs = self._principal_queryset_since_tracking_start()
+        return qs.aggregate(
+            total=Coalesce(Sum("amount"), Decimal("0.00"))
+        )["total"]
+
+    @property
+    def current_principal_balance(self):
+        """
+        Estimated outstanding principal today.
+
+        Semantics:
+
+        - tracking_start_principal is a known lender balance that ALREADY
+          includes all payments on tracking_start_date.
+        - We subtract principal from any expenses STRICTLY AFTER that date.
+        - manual_adjustment lets you nudge the computed balance if needed.
+        """
+        # Base starting point: prefer tracking_start_principal, fall back to original_principal
+        base = self.tracking_start_principal or self.original_principal
+        if base is None:
+            return None
+
+        principal_categories = self.principal_categories()
+        if not principal_categories:
+            # No categories configured; just return the base value.
+            return base
+
+        from .models import Expense  # if you already import Expense at top, you can omit this
+
+        if self.tracking_start_date:
+            # IMPORTANT: strictly greater than tracking_start_date
+            principal_qs = Expense.objects.filter(
+                category__in=principal_categories,
+                date__gt=self.tracking_start_date,
+            )
+        else:
+            principal_qs = Expense.objects.filter(
+                category__in=principal_categories
+            )
+
+        principal_since_start = principal_qs.aggregate(
+            total=Coalesce(Sum("amount"), Decimal("0.00"))
+        )["total"]
+
+        return (
+                base
+                - principal_since_start
+                + (self.manual_adjustment or Decimal("0.00"))
+        )
+
+    @property
+    def interest_paid_current_year(self) -> Decimal:
+        """
+        Interest paid in the current calendar year (based on interest_category).
+        """
+        if not self.interest_category_id:
+            return Decimal("0.00")
+        today = dt_date.today()
+        qs = Expense.objects.filter(
+            category=self.interest_category,
+            date__year=today.year,
+        )
+        return qs.aggregate(
+            total=Coalesce(Sum("amount"), Decimal("0.00"))
+        )["total"]
+
+    @property
+    def total_amortization_months(self):
+        """
+        Total amortization duration in months, if known.
+        """
+        if self.amortization_years_total is None:
+            return None
+        extra = self.amortization_months_extra or 0
+        return self.amortization_years_total * 12 + extra
+
+    @property
+    def amortization_months_elapsed(self):
+        """
+        Rough count of months elapsed since amortization_start_date.
+        """
+        if not self.amortization_start_date or not self.total_amortization_months:
+            return None
+        today = dt_date.today()
+        # Approximate month difference (year, month granularity)
+        months = (today.year - self.amortization_start_date.year) * 12 + (
+            today.month - self.amortization_start_date.month
+        )
+        # Clamp at [0, total_amortization_months]
+        if months < 0:
+            months = 0
+        total = self.total_amortization_months
+        if months > total:
+            months = total
+        return months
+
+    @property
+    def amortization_time_progress_pct(self):
+        """
+        Fraction of the amortization completed based on time (0–100).
+        """
+        total = self.total_amortization_months
+        elapsed = self.amortization_months_elapsed
+        if total is None or elapsed is None or total <= 0:
+            return None
+        return (Decimal(elapsed) / Decimal(total)) * Decimal("100.0")
+
+    @property
+    def principal_progress_pct(self):
+        """
+        Fraction of original principal that has been paid off (0–100),
+        if both original_principal and current_principal_balance are known.
+        """
+        if not self.original_principal or self.original_principal <= 0:
+            return None
+        current = self.current_principal_balance
+        if current is None:
+            return None
+        paid = self.original_principal - current
+        if paid < 0:
+            # If tracking_start_principal was mid-stream, this can be negative initially.
+            return Decimal("0.00")
+        return (paid / self.original_principal) * Decimal("100.0")
+
+    def projected_rows_to_year_end(self, starting_balance, last_payment_date, year):
+        """
+        Generate simple projected payment rows from the payment after `last_payment_date`
+        up to 31-Dec-`year`, assuming:
+        - payments of regular_payment_amount
+        - interest_rate_percent is nominal annual rate (e.g. 5.490 for 5.490%)
+        - per-period interest = balance * (rate_annual / payments_per_year)
+          so principal = payment - interest
+
+        This is an approximation but good enough for forward-looking visuals.
+        """
+        if starting_balance is None:
+            return []
+        if not self.regular_payment_amount or not self.interest_rate_percent:
+            return []
+        if last_payment_date is None:
+            return []
+
+        # Determine payments per year based on frequency
+        if self.payment_frequency == MortgagePaymentFrequency.MONTHLY:
+            payments_per_year = 12
+        elif self.payment_frequency in (
+            MortgagePaymentFrequency.BIWEEKLY,
+            MortgagePaymentFrequency.ACCELERATED_BIWEEKLY,
+        ):
+            payments_per_year = 26
+        elif self.payment_frequency == MortgagePaymentFrequency.WEEKLY:
+            payments_per_year = 52
+        else:
+            payments_per_year = 12
+
+        payment_amount = self.regular_payment_amount
+        rate_annual = (self.interest_rate_percent or Decimal("0.0")) / Decimal("100.0")
+        rate_period = rate_annual / Decimal(payments_per_year)
+
+        def add_months(d: dt_date, n: int) -> dt_date:
+            y = d.year + (d.month - 1 + n) // 12
+            m = (d.month - 1 + n) % 12 + 1
+            # clamp day to 28 to avoid month-end issues
+            day = min(d.day, 28)
+            return dt_date(y, m, day)
+
+        def next_payment_date(d: dt_date) -> dt_date:
+            if self.payment_frequency == MortgagePaymentFrequency.MONTHLY:
+                return add_months(d, 1)
+            elif self.payment_frequency in (
+                MortgagePaymentFrequency.BIWEEKLY,
+                MortgagePaymentFrequency.ACCELERATED_BIWEEKLY,
+            ):
+                return d + timedelta(days=14)
+            elif self.payment_frequency == MortgagePaymentFrequency.WEEKLY:
+                return d + timedelta(days=7)
+            else:
+                return add_months(d, 1)
+
+        year_end = dt_date(year, 12, 31)
+        rows = []
+        balance = starting_balance
+        current_date = last_payment_date
+
+        while True:
+            current_date = next_payment_date(current_date)
+            if current_date > year_end:
+                break
+
+            # simple interest per period
+            interest = (balance * rate_period).quantize(Decimal("0.01"))
+            principal = payment_amount - interest
+            if principal < Decimal("0.00"):
+                principal = Decimal("0.00")
+
+            balance = balance - principal
+
+            rows.append(
+                {
+                    "date": current_date,
+                    "payment_type": "Projected",
+                    "principal": principal,
+                    "interest": interest,
+                    "payment_total": payment_amount,
+                    "balance_after": balance,
+                }
+            )
+
+        return rows
 
 
 class RentalUnitType(models.TextChoices):

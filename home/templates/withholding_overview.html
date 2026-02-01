@@ -81,6 +81,44 @@
             text-decoration: underline;
         }
     </style>
+    {% if payout_form %}
+<div class="card mb-4">
+    <div class="card-header">
+        Record withholding payout
+    </div>
+    <div class="card-body">
+        <form method="post" class="row g-3">
+            {% csrf_token %}
+
+            <div class="col-md-3">
+                {{ payout_form.date.label_tag }}
+                {{ payout_form.date }}
+            </div>
+
+            <div class="col-md-5">
+                {{ payout_form.withholding_category.label_tag }}
+                {{ payout_form.withholding_category }}
+            </div>
+
+            <div class="col-md-2">
+                {{ payout_form.amount.label_tag }}
+                {{ payout_form.amount }}
+            </div>
+
+            <div class="col-md-8">
+                {{ payout_form.note.label_tag }}
+                {{ payout_form.note }}
+            </div>
+
+            <div class="col-md-4 text-end align-self-end">
+                <button type="submit" class="btn btn-outline-danger">
+                    Record payout
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endif %}
 
     {% if accounts %}
         {% for account in accounts %}

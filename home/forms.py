@@ -1,5 +1,7 @@
 from django import forms
+from django.utils import timezone
 from .models import Expense, ExpenseAttachment, Income, Category, IncomeCategory, BankAccount, WithholdingCategory, RentalUnit, CRARentalExpenseCategory
+
 
 class MultipleFileInput(forms.FileInput):
     allow_multiple_selected = True
@@ -317,3 +319,32 @@ class ExpenseAttachmentUploadForm(forms.Form):
         }),
     )
 
+class WithholdingPayoutForm(forms.Form):
+    date = forms.DateField(
+        initial=timezone.now().date,
+        widget=forms.DateInput(attrs={"type": "date", "class": "form-control"}),
+        label="Date",
+    )
+
+    withholding_category = forms.ModelChoiceField(
+        queryset=WithholdingCategory.objects
+            .select_related("account")
+            .order_by("account__name", "name"),
+        label="Withholding bucket",
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+
+    amount = forms.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        min_value=0.01,
+        label="Payout amount",
+        widget=forms.NumberInput(attrs={"class": "form-control"}),
+        help_text="Enter a positive number. This will reduce the bucket balance.",
+    )
+
+    note = forms.CharField(
+        required=False,
+        widget=forms.TextInput(attrs={"class": "form-control"}),
+        label="Note",
+    )

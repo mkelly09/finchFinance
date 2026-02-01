@@ -3,9 +3,10 @@
 
 {% block content %}
 <div class="container mt-4">
+  <!-- Header: title + high-level income/expense/net + back buttons -->
   <div class="row mb-3 align-items-end">
-    <div class="col-lg-7">
-      <h2>{{ property.name }} — Rental Snapshot</h2>
+    <div class="col-md-8">
+      <h2>{{ property.name }} — Owned Property Snapshot</h2>
       <p class="text-muted mb-0">
         Income: <strong>${{ range_income_total|floatformat:2|intcomma }}</strong>
         &nbsp;•&nbsp;
@@ -13,30 +14,381 @@
         &nbsp;•&nbsp;
         Net: <strong>${{ range_net_total|floatformat:2|intcomma }}</strong>
       </p>
+      {% if property.equity %}
+        <p class="text-muted mb-0">
+          Equity (est.): <strong>${{ property.equity|floatformat:2|intcomma }}</strong>
+          {% if property.ltv_pct %}
+            · LTV: <strong>{{ property.ltv_pct|floatformat:1 }}%</strong>
+          {% endif %}
+        </p>
+      {% endif %}
     </div>
-
-    <div class="col-lg-5 mt-3 mt-lg-0">
-      <form method="get" class="row g-2 align-items-end">
-        <div class="col-6">
-          <label for="month" class="form-label">Anchor month:</label>
-          <input type="month" name="month" id="month" class="form-control" value="{{ selected_month }}">
-        </div>
-        <div class="col-6">
-          <label for="range" class="form-label">Range:</label>
-          <select name="range" id="range" class="form-select">
-            {% for key,label in range_options %}
-              <option value="{{ key }}" {% if selected_range == key %}selected{% endif %}>{{ label }}</option>
-            {% endfor %}
-          </select>
-        </div>
-        <div class="col-12">
-          <button type="submit" class="btn btn-primary w-100">Apply</button>
-        </div>
-      </form>
+    <div class="col-md-4 mt-3 mt-md-0 text-md-end">
+      <a class="btn btn-outline-secondary mb-1"
+         href="{% url 'rental_properties' %}?month={{ selected_month }}&range={{ selected_range }}">
+        ← Back to Owned Properties
+      </a>
+      <a class="btn btn-outline-secondary mb-1 ms-md-2"
+         href="{% url 'dashboard' %}?month={{ selected_month }}">
+        ← Back to Dashboard
+      </a>
     </div>
   </div>
 
-  <!-- Chart -->
+  <!-- Mortgage card -->
+  <div class="card shadow-sm mb-3">
+    <div class="card-body">
+      <div class="d-flex justify-content-between align-items-start mb-2">
+        <div>
+          <h5 class="card-title mb-1">Mortgage</h5>
+          <p class="text-muted small mb-0">
+            Balances are tracked from your mortgage principal / prepayment expense categories.
+          </p>
+        </div>
+      </div>
+
+      {% if mortgage_panels %}
+        {% for panel in mortgage_panels %}
+          {% with m=panel.mortgage %}
+          <div class="border rounded p-2 mb-2">
+            <div class="d-flex flex-wrap justify-content-between align-items-end mb-2">
+              <div>
+                <div class="fw-semibold">
+                  {{ m.name }}
+                  {% if m.lender_name %}
+                    <span class="text-muted">— {{ m.lender_name }}</span>
+                  {% endif %}
+                </div>
+                <div class="text-muted small">
+                  {% if m.original_principal %}
+                    Original: ${{ m.original_principal|floatformat:2|intcomma }}
+                    {% if m.origination_date %}
+                      ({{ m.origination_date|date:"Y-m-d" }})
+                    {% endif %}
+                  {% else %}
+                    <span class="text-muted">Original principal not set</span>
+                  {% endif %}
+                </div>
+                <div class="text-muted small">
+                  YTD ({{ selected_month|slice:":4" }}):
+                  Principal:
+                  <strong>${{ panel.principal_ytd|floatformat:2|intcomma }}</strong>,
+                  Interest:
+                  <strong>${{ panel.interest_ytd|floatformat:2|intcomma }}</strong>
+                </div>
+              </div>
+              <div class="text-end">
+                <div class="small text-muted">Current balance</div>
+                <div class="fs-5 fw-semibold">
+                  {% if m.current_principal_balance is not None %}
+                    ${{ m.current_principal_balance|floatformat:2|intcomma }}
+                  {% else %}
+                    <span class="text-muted">—</span>
+                  {% endif %}
+                </div>
+                <div class="mt-1">
+                  <button
+                    type="button"
+                    class="btn btn-outline-primary btn-sm"
+                    data-bs-toggle="collapse"
+                    data-bs-target="#mortgageDetails-{{ m.id }}"
+                    aria-expanded="false"
+                    aria-controls="mortgageDetails-{{ m.id }}">
+                    Toggle details
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="row small text-muted">
+              <div class="col-md-4 mb-1">
+                <div class="fw-semibold">Tracking start</div>
+                {% if m.tracking_start_principal and m.tracking_start_date %}
+                  <div>
+                    ${{ m.tracking_start_principal|floatformat:2|intcomma }}
+                    on {{ m.tracking_start_date|date:"Y-m-d" }}
+                  </div>
+                {% else %}
+                  <div>Not configured</div>
+                {% endif %}
+              </div>
+
+              <div class="col-md-4 mb-1">
+                <div class="fw-semibold">Rate &amp; term</div>
+                <div>
+                  {% if m.interest_rate_percent %}
+                    {{ m.interest_rate_percent|floatformat:3 }}%
+                  {% else %}
+                    <span class="text-muted">Rate not set</span>
+                  {% endif %}
+                  {% if m.term_start_date or m.term_end_date %}
+                    <br>
+                    {% if m.term_start_date %}From {{ m.term_start_date|date:"Y-m-d" }}{% endif %}
+                    {% if m.term_end_date %}
+                      {% if m.term_start_date %}&nbsp;to{% else %}Term ends{% endif %}
+                      {{ m.term_end_date|date:"Y-m-d" }}
+                    {% endif %}
+                  {% endif %}
+                </div>
+                {% if m.compounding_frequency %}
+                  <div>Compounding: {{ m.get_compounding_frequency_display }}</div>
+                {% endif %}
+              </div>
+
+              <div class="col-md-4 mb-1">
+                <div class="fw-semibold">Amortization progress</div>
+                {% if m.amortization_time_progress_pct %}
+                  <div>Time: {{ m.amortization_time_progress_pct|floatformat:1 }}%</div>
+                {% else %}
+                  <div>Time: <span class="text-muted">n/a</span></div>
+                {% endif %}
+
+                {% if m.principal_progress_pct %}
+                  <div>Principal: {{ m.principal_progress_pct|floatformat:1 }}%</div>
+                {% else %}
+                  <div>Principal: <span class="text-muted">n/a</span></div>
+                {% endif %}
+
+                {% if m.amortization_years_total %}
+                  <div>
+                    Total amortization: {{ m.amortization_years_total }} year{% if m.amortization_years_total != 1 %}s{% endif %}
+                    {% if m.amortization_months_extra %}
+                      + {{ m.amortization_months_extra }} month{% if m.amortization_months_extra != 1 %}s{% endif %}
+                    {% endif %}
+                  </div>
+                {% endif %}
+              </div>
+            </div>
+
+            <!-- Collapsible details: balance chart, prepayment, ledger, history -->
+            <div class="collapse mt-2" id="mortgageDetails-{{ m.id }}">
+              <hr class="my-2">
+
+              {% if panel.chart_labels %}
+                <h6 class="mb-2">Balance timeline ({{ selected_month|slice:":4" }})</h6>
+                <div class="mb-3">
+                  <canvas
+                    id="mortgageBalanceChart-{{ m.id }}"
+                    height="70"
+                    data-labels="{{ panel.chart_labels|join:',' }}"
+                    data-balances="{{ panel.chart_balances|join:',' }}">
+                  </canvas>
+                </div>
+              {% endif %}
+
+              {% if m.regular_payment_amount and m.interest_rate_percent %}
+                <div class="border rounded p-2 mb-3 small">
+                  <div class="fw-semibold mb-1">Prepayment impact (per payment)</div>
+                  <div class="row g-2 align-items-center">
+                    <div class="col-md-4">
+                      <label class="form-label mb-1">Extra principal per payment ($)</label>
+                      <input
+                        type="number"
+                        step="10"
+                        min="0"
+                        class="form-control form-control-sm prepay-input"
+                        data-mortgage-id="{{ m.id }}"
+                        data-current-balance="{% if m.current_principal_balance %}{{ m.current_principal_balance }}{% else %}0{% endif %}"
+                        data-rate="{{ m.interest_rate_percent }}"
+                        data-payment="{{ m.regular_payment_amount }}"
+                        data-frequency="{{ m.payment_frequency }}">
+                    </div>
+                    <div class="col-md-8">
+                      <div id="prepaySummary-{{ m.id }}" class="text-muted">
+                        Enter an extra amount to see how it changes payoff timing and interest.
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              {% endif %}
+
+              <h6 class="mb-2">Payment ledger ({{ selected_month|slice:":4" }})</h6>
+              <p class="text-muted small mb-2">
+                Actual payments from {{ selected_month|slice:":4" }}-01-01 up to the end of the selected anchor month.
+                Projected rows show the remaining payments for this year, based on your rate and regular payment.
+              </p>
+
+              {% if panel.ledger_rows %}
+                <div class="table-responsive mb-2">
+                  <table class="table table-sm table-striped align-middle mb-0">
+                    <thead class="table-light">
+                      <tr>
+                        <th style="width: 120px;">Date</th>
+                        <th style="width: 140px;">Type</th>
+                        <th style="width: 140px;">Payment</th>
+                        <th style="width: 140px;">Principal</th>
+                        <th style="width: 140px;">Interest</th>
+                        <th style="width: 160px;">Balance after</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for row in panel.ledger_rows %}
+                        <tr>
+                          <td>{{ row.date|date:"Y-m-d" }}</td>
+                          <td>{{ row.payment_type }}</td>
+                          <td>
+                            {% if row.payment_total %}
+                              ${{ row.payment_total|floatformat:2|intcomma }}
+                            {% else %}
+                              <span class="text-muted">—</span>
+                            {% endif %}
+                          </td>
+                          <td>
+                            {% if row.principal %}
+                              ${{ row.principal|floatformat:2|intcomma }}
+                            {% else %}
+                              <span class="text-muted">—</span>
+                            {% endif %}
+                          </td>
+                          <td>
+                            {% if row.interest %}
+                              ${{ row.interest|floatformat:2|intcomma }}
+                            {% else %}
+                              <span class="text-muted">—</span>
+                            {% endif %}
+                          </td>
+                          <td>
+                            {% if row.balance_after is not None %}
+                              ${{ row.balance_after|floatformat:2|intcomma }}
+                            {% else %}
+                              <span class="text-muted">n/a</span>
+                            {% endif %}
+                          </td>
+                        </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              {% else %}
+                <p class="text-muted mb-2">
+                  No mortgage principal/interest transactions found for this year (or tracking configuration is incomplete).
+                </p>
+              {% endif %}
+
+              {% if panel.projected_rows %}
+                <hr class="my-2">
+                <h6 class="mb-2">Projected payments (rest of {{ selected_month|slice:":4" }})</h6>
+                <div class="table-responsive mb-3">
+                  <table class="table table-sm table-striped align-middle mb-0">
+                    <thead class="table-light">
+                      <tr>
+                        <th style="width: 120px;">Date</th>
+                        <th style="width: 140px;">Type</th>
+                        <th style="width: 140px;">Payment</th>
+                        <th style="width: 140px;">Principal</th>
+                        <th style="width: 140px;">Interest</th>
+                        <th style="width: 160px;">Balance after</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for row in panel.projected_rows %}
+                        <tr>
+                          <td>{{ row.date|date:"Y-m-d" }}</td>
+                          <td>{{ row.payment_type }}</td>
+                          <td>${{ row.payment_total|floatformat:2|intcomma }}</td>
+                          <td>${{ row.principal|floatformat:2|intcomma }}</td>
+                          <td>${{ row.interest|floatformat:2|intcomma }}</td>
+                          <td>${{ row.balance_after|floatformat:2|intcomma }}</td>
+                        </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              {% endif %}
+
+              {% if panel.history_years %}
+                <hr class="my-2">
+                <h6 class="mb-2">Mortgage history (all years)</h6>
+                <p class="text-muted small mb-1">
+                  Principal and interest paid per calendar year across all recorded transactions.
+                </p>
+                <div class="mb-2">
+                  <canvas
+                    id="mortgageHistoryChart-{{ m.id }}"
+                    height="80"
+                    data-years="{{ panel.history_years|join:',' }}"
+                    data-principal="{{ panel.history_principal|join:',' }}"
+                    data-interest="{{ panel.history_interest|join:',' }}">
+                  </canvas>
+                </div>
+                <p class="text-muted small mb-0">
+                  Total principal repaid:
+                  <strong>${{ panel.history_total_principal|floatformat:2|intcomma }}</strong>
+                  {% if panel.history_pct_of_original %}
+                    ({{ panel.history_pct_of_original|floatformat:1 }}% of original principal)
+                  {% endif %}
+                </p>
+              {% endif %}
+            </div>
+          </div>
+          {% endwith %}
+        {% endfor %}
+      {% else %}
+        <p class="text-muted mb-0">
+          No mortgage configured for this property yet. You can add one in the admin under
+          <em>Property mortgages</em> or inline on the property record.
+        </p>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Property value & equity card -->
+  <div class="card shadow-sm mb-3">
+    <div class="card-body">
+      <div class="d-flex justify-content-between align-items-start mb-1">
+        <div>
+          <h5 class="card-title mb-1">Property value &amp; equity</h5>
+          <p class="text-muted small mb-0">
+            Used for equity and LTV calculations. This does not affect any income/expense numbers.
+          </p>
+        </div>
+        <div>
+          <button
+            type="button"
+            class="btn btn-outline-primary btn-sm"
+            data-bs-toggle="modal"
+            data-bs-target="#editValueModal">
+            Edit estimated value
+          </button>
+        </div>
+      </div>
+
+      <div class="row small mt-2">
+        <div class="col-md-4 mb-1">
+          <div class="fw-semibold">Estimated value</div>
+          {% if property.estimated_value %}
+            <div>${{ property.estimated_value|floatformat:0|intcomma }}</div>
+            {% if property.last_valued_date %}
+              <div class="text-muted">(as of {{ property.last_valued_date|date:"Y-m-d" }})</div>
+            {% endif %}
+          {% else %}
+            <div class="text-muted">Not set</div>
+          {% endif %}
+        </div>
+        <div class="col-md-4 mb-1">
+          <div class="fw-semibold">Total mortgage balance</div>
+          {% if property.total_mortgage_balance %}
+            <div>${{ property.total_mortgage_balance|floatformat:2|intcomma }}</div>
+          {% else %}
+            <div class="text-muted">No active mortgages / balance n/a</div>
+          {% endif %}
+        </div>
+        <div class="col-md-4 mb-1">
+          <div class="fw-semibold">Equity &amp; LTV</div>
+          {% if property.equity %}
+            <div>Equity: ${{ property.equity|floatformat:2|intcomma }}</div>
+            {% if property.ltv_pct %}
+              <div>LTV: {{ property.ltv_pct|floatformat:1 }}%</div>
+            {% endif %}
+          {% else %}
+            <div class="text-muted">Set value and mortgage tracking to see equity.</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Cashflow card -->
   {{ trend_labels|json_script:"rp-trend-labels" }}
   {{ trend_income|json_script:"rp-trend-income" }}
   {{ trend_expenses|json_script:"rp-trend-expenses" }}
@@ -44,40 +396,92 @@
 
   <div class="card shadow-sm mb-3">
     <div class="card-body">
-      <div class="d-flex justify-content-between align-items-end mb-2">
-        <h5 class="card-title mb-0">Cashflow over time</h5>
-        <div class="text-muted">
-          Net for range: <strong>${{ range_net_total|floatformat:2|intcomma }}</strong>
+      <div class="d-flex flex-wrap justify-content-between align-items-end mb-2">
+        <div class="mb-2 mb-md-0">
+          <h5 class="card-title mb-0">Cashflow over time</h5>
+          <div class="text-muted">
+            Net for range: <strong>${{ range_net_total|floatformat:2|intcomma }}</strong>
+          </div>
+        </div>
+        <div>
+          <form method="get" class="row g-1 align-items-end">
+            <div class="col-auto">
+              <label for="month" class="form-label mb-0 small">Anchor month</label>
+              <input type="month" name="month" id="month" class="form-control form-control-sm" value="{{ selected_month }}">
+            </div>
+            <div class="col-auto">
+              <label for="range" class="form-label mb-0 small">Range</label>
+              <select name="range" id="range" class="form-select form-select-sm">
+                {% for key,label in range_options %}
+                  <option value="{{ key }}" {% if selected_range == key %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-auto">
+              <button type="submit" class="btn btn-primary btn-sm mt-3 mt-md-0">Apply</button>
+            </div>
+          </form>
         </div>
       </div>
       <canvas id="rentalTrendChart" height="90"></canvas>
     </div>
   </div>
 
-  <div class="mb-4">
-    <a class="btn btn-outline-secondary"
-       href="{% url 'rental_properties' %}?month={{ selected_month }}&range={{ selected_range }}">
-      ← Back to Rental Properties
-    </a>
-    <a class="btn btn-outline-secondary ms-2" href="{% url 'dashboard' %}?month={{ selected_month }}">
-      ← Back to Dashboard
-    </a>
+  <!-- Edit value modal -->
+  <div class="modal fade" id="editValueModal" tabindex="-1" aria-labelledby="editValueModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <form method="post">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="update_property_value">
+          <input type="hidden" name="month" value="{{ selected_month }}">
+          <input type="hidden" name="range" value="{{ selected_range }}">
+
+          <div class="modal-header">
+            <h5 class="modal-title" id="editValueModalLabel">Edit estimated value</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <div class="mb-2">
+              <label class="form-label">Estimated value ($)</label>
+              <input type="number"
+                     step="1000"
+                     min="0"
+                     name="estimated_value"
+                     class="form-control"
+                     value="{% if property.estimated_value %}{{ property.estimated_value }}{% endif %}">
+            </div>
+            <div class="mb-0">
+              <label class="form-label">As of</label>
+              <input type="date"
+                     name="last_valued_date"
+                     class="form-control"
+                     value="{% if property.last_valued_date %}{{ property.last_valued_date|date:'Y-m-d' }}{% endif %}">
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" class="btn btn-primary">Save</button>
+          </div>
+        </form>
+      </div>
+    </div>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script>
     document.addEventListener("DOMContentLoaded", () => {
-      const labels = JSON.parse(document.getElementById("rp-trend-labels").textContent);
+      // Cashflow chart
+      const labelsCF = JSON.parse(document.getElementById("rp-trend-labels").textContent);
       const income = JSON.parse(document.getElementById("rp-trend-income").textContent);
       const expenses = JSON.parse(document.getElementById("rp-trend-expenses").textContent);
       const net = JSON.parse(document.getElementById("rp-trend-net").textContent);
 
-      const ctx = document.getElementById("rentalTrendChart").getContext("2d");
-
-      new Chart(ctx, {
+      const ctxCF = document.getElementById("rentalTrendChart").getContext("2d");
+      new Chart(ctxCF, {
         type: "line",
         data: {
-          labels: labels,
+          labels: labelsCF,
           datasets: [
             { label: "Income", data: income, tension: 0, pointRadius: 3 },
             { label: "Expenses", data: expenses, tension: 0, pointRadius: 3 },
@@ -96,10 +500,183 @@
           }
         }
       });
+
+      // Mortgage balance charts
+      document.querySelectorAll("canvas[id^='mortgageBalanceChart-']").forEach((canvas) => {
+        const labelsStr = canvas.getAttribute("data-labels") || "";
+        const balancesStr = canvas.getAttribute("data-balances") || "";
+        if (!labelsStr || !balancesStr) return;
+
+        const labels = labelsStr.split(",");
+        const balances = balancesStr.split(",").map(parseFloat);
+
+        const ctx = canvas.getContext("2d");
+        new Chart(ctx, {
+          type: "line",
+          data: {
+            labels: labels,
+            datasets: [
+              {
+                label: "Balance",
+                data: balances,
+                tension: 0,
+                pointRadius: 2,
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            plugins: {
+              legend: { display: false },
+              tooltip: { mode: "index", intersect: false },
+            },
+            interaction: { mode: "index", intersect: false },
+            scales: {
+              y: { beginAtZero: false },
+            },
+          },
+        });
+      });
+
+      // Mortgage history charts (principal vs interest by year)
+      document.querySelectorAll("canvas[id^='mortgageHistoryChart-']").forEach((canvas) => {
+        const yearsStr = canvas.getAttribute("data-years") || "";
+        const principalStr = canvas.getAttribute("data-principal") || "";
+        const interestStr = canvas.getAttribute("data-interest") || "";
+        if (!yearsStr || !principalStr) return;
+
+        const labels = yearsStr.split(",");
+        const principal = principalStr.split(",").map(parseFloat);
+        const interest = interestStr ? interestStr.split(",").map(parseFloat) : [];
+
+        const ctx = canvas.getContext("2d");
+        new Chart(ctx, {
+          type: "bar",
+          data: {
+            labels: labels,
+            datasets: [
+              {
+                label: "Principal",
+                data: principal,
+              },
+              {
+                label: "Interest",
+                data: interest,
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            plugins: {
+              legend: { display: true },
+              tooltip: { mode: "index", intersect: false },
+            },
+            interaction: { mode: "index", intersect: false },
+            scales: {
+              y: { beginAtZero: true },
+            },
+          },
+        });
+      });
+
+      // Prepayment impact simulator
+      function amortize(balance, annualRate, paymentPerPeriod, paymentsPerYear, startDate) {
+        const ratePerPeriod = annualRate / paymentsPerYear;
+        let periods = 0;
+        let totalInterest = 0;
+        let date = new Date(startDate.getTime());
+
+        function nextDate(d) {
+          const nd = new Date(d.getTime());
+          if (paymentsPerYear === 12) {
+            nd.setMonth(nd.getMonth() + 1);
+          } else if (paymentsPerYear === 26) {
+            nd.setDate(nd.getDate() + 14);
+          } else if (paymentsPerYear === 52) {
+            nd.setDate(nd.getDate() + 7);
+          } else {
+            nd.setMonth(nd.getMonth() + 1);
+          }
+          return nd;
+        }
+
+        if (paymentPerPeriod <= balance * ratePerPeriod) {
+          return { periods: null, totalInterest: null, endDate: null };
+        }
+
+        while (balance > 0 && periods < 2000) {
+          const interest = balance * ratePerPeriod;
+          let principal = paymentPerPeriod - interest;
+          if (principal > balance) {
+            principal = balance;
+          }
+          totalInterest += interest;
+          balance -= principal;
+          periods += 1;
+          date = nextDate(date);
+        }
+
+        return { periods, totalInterest, endDate: date };
+      }
+
+      function paymentsPerYearForFrequency(freq) {
+        if (freq === "MONTHLY") return 12;
+        if (freq === "BIWEEKLY" || freq === "ACCEL_BIWEEKLY") return 26;
+        if (freq === "WEEKLY") return 52;
+        return 12;
+      }
+
+      document.querySelectorAll(".prepay-input").forEach((input) => {
+        const mortgageId = input.getAttribute("data-mortgage-id");
+        const summaryEl = document.getElementById("prepaySummary-" + mortgageId);
+        if (!summaryEl) return;
+
+        function recalc() {
+          const extra = parseFloat(input.value || "0");
+          const balance = parseFloat(input.getAttribute("data-current-balance") || "0");
+          const rate = parseFloat(input.getAttribute("data-rate") || "0") / 100.0;
+          const payment = parseFloat(input.getAttribute("data-payment") || "0");
+          const freq = input.getAttribute("data-frequency") || "MONTHLY";
+
+          if (!balance || !rate || !payment) {
+            summaryEl.textContent = "Configure balance, rate, and payment to see impact.";
+            return;
+          }
+
+          const paymentsPerYear = paymentsPerYearForFrequency(freq);
+          const today = new Date();
+
+          const base = amortize(balance, rate, payment, paymentsPerYear, today);
+          const withExtra = amortize(balance, rate, payment + extra, paymentsPerYear, today);
+
+          if (!base.periods || !withExtra.periods) {
+            summaryEl.textContent = "Payment is too small for this balance/rate.";
+            return;
+          }
+
+          const monthsBase = (base.periods / paymentsPerYear) * 12.0;
+          const monthsExtra = (withExtra.periods / paymentsPerYear) * 12.0;
+          const monthsSaved = monthsBase - monthsExtra;
+          const interestSaved = base.totalInterest - withExtra.totalInterest;
+
+          const options = { year: "numeric", month: "short" };
+          const baseDateStr = base.endDate.toLocaleDateString(undefined, options);
+          const extraDateStr = withExtra.endDate.toLocaleDateString(undefined, options);
+
+          summaryEl.innerHTML =
+            `Baseline payoff: <strong>${baseDateStr}</strong>. ` +
+            `With <strong>$${extra.toFixed(0)}</strong> extra per payment, payoff becomes ` +
+            `<strong>${extraDateStr}</strong> (about <strong>${monthsSaved.toFixed(1)}</strong> months sooner) ` +
+            `and saves roughly <strong>$${interestSaved.toFixed(0)}</strong> in interest (approximate).`;
+        }
+
+        input.addEventListener("change", recalc);
+        input.addEventListener("keyup", recalc);
+      });
     });
   </script>
 
-  <!-- Monthly drilldown cards -->
+  <!-- Monthly drilldown cards (unchanged) -->
   {% for row in month_rows %}
     <div class="card shadow-sm mb-3">
       <div class="card-body">

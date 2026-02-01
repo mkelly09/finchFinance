@@ -9,7 +9,8 @@ from .models import (
     Expense,
     ExpenseAttachment,
     Income,
-
+    RentalProperty,
+    PropertyMortgage,
 )
 
 
@@ -19,6 +20,7 @@ from .models import (
 class CategoryAdmin(admin.ModelAdmin):
     list_display = ("name", "monthly_limit", "savings_target_per_paycheque")
     search_fields = ("name",)
+
 
 # ---------- INCOME CATEGORY ----------
 
@@ -78,6 +80,136 @@ class WithholdingTransactionAdmin(admin.ModelAdmin):
     list_filter = ("category", "date")
     search_fields = ("note",)
     ordering = ("-date", "-id")
+
+
+# ---------- PROPERTIES & MORTGAGES ----------
+
+class PropertyMortgageInline(admin.TabularInline):
+    """
+    Inline editor for mortgages on the property admin.
+    Lets you see/edit the main mortgage metadata directly on the property.
+    """
+    model = PropertyMortgage
+    extra = 0
+    fields = (
+        "name",
+        "lender_name",
+        "is_active",
+        "original_principal",
+        "tracking_start_principal",
+        "tracking_start_date",
+        "interest_rate_percent",
+        "term_end_date",
+    )
+    readonly_fields = ()
+    show_change_link = True
+
+
+@admin.register(RentalProperty)
+class RentalPropertyAdmin(admin.ModelAdmin):
+    list_display = ("name", "is_active", "estimated_value", "equity_display")
+    search_fields = ("name",)
+    list_filter = ("is_active",)
+    inlines = [PropertyMortgageInline]
+
+    def equity_display(self, obj):
+        eq = obj.equity
+        if eq is None:
+            return "—"
+        return f"${eq:,.2f}"
+
+    equity_display.short_description = "Equity"
+
+
+
+@admin.register(PropertyMortgage)
+class PropertyMortgageAdmin(admin.ModelAdmin):
+    """
+    Standalone admin for mortgages. You can also edit them inline on the property.
+    """
+
+    list_display = (
+        "owned_property",
+        "name",
+        "lender_name",
+        "is_active",
+        "current_balance_display",
+        "interest_rate_percent",
+        "term_end_date",
+    )
+    list_filter = (
+        "owned_property",
+        "is_active",
+        "payment_frequency",
+        "compounding_frequency",
+        "term_end_date",
+    )
+    search_fields = ("name", "lender_name")
+    ordering = ("owned_property__name", "name")
+
+    fieldsets = (
+        ("Property & identity", {
+            "fields": (
+                "owned_property",
+                "name",
+                "lender_name",
+                "is_active",
+            )
+        }),
+        ("Original mortgage", {
+            "fields": (
+                "original_principal",
+                "origination_date",
+            )
+        }),
+        ("Tracking start (for in-app balance)", {
+            "fields": (
+                "tracking_start_principal",
+                "tracking_start_date",
+                "manual_adjustment",
+                "current_balance_display",
+            )
+        }),
+        ("Amortization & schedule", {
+            "fields": (
+                "amortization_years_total",
+                "amortization_months_extra",
+                "amortization_start_date",
+                "payment_frequency",
+                "regular_payment_amount",
+            )
+        }),
+        ("Interest & term", {
+            "fields": (
+                "interest_rate_percent",
+                "compounding_frequency",
+                "interest_rate_effective_date",
+                "term_start_date",
+                "term_end_date",
+            )
+        }),
+        ("Categories (expense linkage)", {
+            "fields": (
+                "principal_category",
+                "prepayment_category",
+                "interest_category",
+            )
+        }),
+    )
+
+    readonly_fields = ("current_balance_display",)
+
+    def current_balance_display(self, obj):
+        """
+        Nicely formatted current principal balance for admin display.
+        """
+        balance = obj.current_principal_balance
+        if balance is None:
+            return "—"
+        # You can tweak formatting here if you like
+        return f"${balance:,.2f}"
+
+    current_balance_display.short_description = "Current balance"
 
 
 # ---------- IMPORT BATCHES ----------
@@ -149,6 +281,7 @@ class IncomeAdmin(admin.ModelAdmin):
     list_filter = ("category", "taxable", "bank_account", "date")
     search_fields = ("notes",)
     ordering = ("-date",)
+
 
 @admin.register(ExpenseAttachment)
 class ExpenseAttachmentAdmin(admin.ModelAdmin):

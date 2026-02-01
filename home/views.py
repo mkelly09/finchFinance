@@ -16,8 +16,9 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods, require_POST
 from django.conf import settings
 from django.urls import reverse
+from django.db.models.functions import Coalesce
 
-from .forms import TransactionForm, CSVUploadForm, TransactionImportForm, ExpenseEditForm, ExpenseAttachmentUploadForm
+from .forms import TransactionForm, CSVUploadForm, TransactionImportForm, ExpenseEditForm, ExpenseAttachmentUploadForm, WithholdingPayoutForm
 from .models import (
     Expense,
     ExpenseAttachment,
@@ -774,10 +775,10 @@ def income_category_income_list(request, pk):
 
 def rental_properties(request):
     """
-    List rental properties and show totals for selected month/range:
-      - total income
-      - total expenses
-      - net cashflow
+    Owned properties overview:
+      - income / expenses / net over a selected range
+      - mortgage summary (if configured)
+      - equity, if an estimated value is set
     """
     selected_month_str = request.GET.get("month")
     range_key = request.GET.get("range", "6")
@@ -787,53 +788,91 @@ def rental_properties(request):
         year, month = map(int, (selected_month_str or "").split("-"))
     except Exception:
         year, month = today.year, today.month
+        selected_month_str = f"{year:04d}-{month:02d}"
 
     anchor_month_start = date(year, month, 1)
-    anchor_month_end = date(year, month, monthrange(year, month)[1])
 
     def add_months(d: date, delta_months: int) -> date:
         y = d.year + (d.month - 1 + delta_months) // 12
         m = (d.month - 1 + delta_months) % 12 + 1
         return date(y, m, 1)
 
+    # Determine range_start and range_end (inclusive)
     if range_key in ("3", "6", "12"):
         n = int(range_key)
-        range_start = add_months(anchor_month_start, -(n - 1))
-        range_end = anchor_month_end
-
+        start_month = add_months(anchor_month_start, -(n - 1))
+        range_start = start_month
+        range_end = date(year, month, monthrange(year, month)[1])
     elif range_key == "ytd":
-        range_start = date(anchor_month_start.year, 1, 1)
-        range_end = anchor_month_end
-
+        range_start = date(year, 1, 1)
+        range_end = date(year, month, monthrange(year, month)[1])
     elif range_key == "prev_year":
-        prev_year = anchor_month_start.year - 1
+        prev_year = year - 1
         range_start = date(prev_year, 1, 1)
         range_end = date(prev_year, 12, 31)
-
     elif range_key == "all":
         earliest_income = (
-            Income.objects.filter(rental_unit__isnull=False)
-            .order_by("date")
-            .values_list("date", flat=True)
-            .first()
+            Income.objects.order_by("date").values_list("date", flat=True).first()
         )
         earliest_expense = (
-            Expense.objects.filter(rental_unit__isnull=False)
-            .order_by("date")
-            .values_list("date", flat=True)
-            .first()
+            Expense.objects.order_by("date").values_list("date", flat=True).first()
         )
-
         earliest = earliest_income or earliest_expense
         if earliest_income and earliest_expense:
             earliest = min(earliest_income, earliest_expense)
-
-        range_start = date(earliest.year, earliest.month, 1) if earliest else anchor_month_start
-        range_end = anchor_month_end
-
+        if earliest:
+            range_start = date(earliest.year, earliest.month, 1)
+        else:
+            range_start = anchor_month_start
+        range_end = date(year, month, monthrange(year, month)[1])
     else:
-        range_start = add_months(anchor_month_start, -5)
-        range_end = anchor_month_end
+        # default last 6 months
+        start_month = add_months(anchor_month_start, -5)
+        range_start = start_month
+        range_end = date(year, month, monthrange(year, month)[1])
+
+    properties = RentalProperty.objects.filter(is_active=True).order_by("name")
+
+    rows = []
+    for prop in properties:
+        income_total = (
+            Income.objects.filter(
+                rental_unit__property=prop,
+                date__range=(range_start, range_end),
+            ).aggregate(total=Sum("amount"))["total"]
+            or Decimal("0.00")
+        )
+        expense_total = (
+            Expense.objects.filter(
+                rental_unit__property=prop,
+                date__range=(range_start, range_end),
+            ).aggregate(total=Sum("amount"))["total"]
+            or Decimal("0.00")
+        )
+        net_total = income_total - expense_total
+
+        active_mortgage = prop.mortgages.filter(is_active=True).order_by("id").first()
+        if active_mortgage:
+            mortgage_info = {
+                "name": active_mortgage.name,
+                "lender_name": active_mortgage.lender_name,
+                "current_balance": active_mortgage.current_principal_balance,
+                "rate": active_mortgage.interest_rate_percent,
+                "term_end": active_mortgage.term_end_date,
+            }
+        else:
+            mortgage_info = None
+
+        rows.append({
+            "property": prop,
+            "mortgage": mortgage_info,
+            "estimated_value": prop.estimated_value,
+            "equity": prop.equity,
+            "ltv_pct": prop.ltv_pct,
+            "income_total": income_total,
+            "expense_total": expense_total,
+            "net_total": net_total,
+        })
 
     range_options = [
         ("3", "Last 3 months"),
@@ -843,31 +882,6 @@ def rental_properties(request):
         ("prev_year", "Previous year"),
         ("all", "All time"),
     ]
-
-    properties = RentalProperty.objects.filter(is_active=True).order_by("name")
-
-    rows = []
-    for prop in properties:
-        income_total = (
-            Income.objects.filter(rental_unit__property=prop, date__range=(range_start, range_end))
-            .aggregate(total=Sum("amount"))["total"]
-            or Decimal("0.00")
-        )
-
-        expense_total = (
-            Expense.objects.filter(rental_unit__property=prop, date__range=(range_start, range_end))
-            .aggregate(total=Sum("amount"))["total"]
-            or Decimal("0.00")
-        )
-
-        net = income_total - expense_total
-
-        rows.append({
-            "property": prop,
-            "income_total": income_total,
-            "expense_total": expense_total,
-            "net_total": net,
-        })
 
     context = {
         "rows": rows,
@@ -879,18 +893,49 @@ def rental_properties(request):
     }
     return render(request, "rental_properties.html", context)
 
+
+
 def rental_property_detail(request, property_id):
-    selected_month_str = request.GET.get("month")
-    range_key = request.GET.get("range", "6")
+    # Allow POST to carry the same month/range as GET
+    selected_month_str = request.POST.get("month") or request.GET.get("month")
+    range_key = request.POST.get("range") or request.GET.get("range", "6")
     today = date.today()
 
     try:
         year, month = map(int, (selected_month_str or "").split("-"))
     except Exception:
         year, month = today.year, today.month
+        selected_month_str = f"{year:04d}-{month:02d}"
 
-    prop = get_object_or_404(RentalProperty, pk=property_id)
+    prop = get_object_or_404(RentalProperty.objects.prefetch_related("mortgages"), pk=property_id)
 
+    # --- Property value update (sale price / estimated value) ---
+    if request.method == "POST" and request.POST.get("action") == "update_property_value":
+        value_str = (request.POST.get("estimated_value") or "").strip()
+        valued_date_str = (request.POST.get("last_valued_date") or "").strip()
+
+        try:
+            prop.estimated_value = Decimal(value_str) if value_str else None
+        except (InvalidOperation, ValueError):
+            messages.error(request, "Could not parse estimated value. Please enter a valid number.")
+        else:
+            if valued_date_str:
+                try:
+                    prop.last_valued_date = date.fromisoformat(valued_date_str)
+                except ValueError:
+                    messages.error(request, "Could not parse valuation date. Please use YYYY-MM-DD.")
+            else:
+                prop.last_valued_date = None
+
+            prop.save()
+            messages.success(request, "Property value updated.")
+
+        # Redirect (PRG) so a refresh doesn't resubmit the form
+        return redirect(f"{request.path}?month={selected_month_str}&range={range_key}")
+
+    # -----------------------
+    # Anchor month + range → list of months
+    # -----------------------
     anchor_month_start = date(year, month, 1)
 
     def add_months(d: date, delta_months: int) -> date:
@@ -907,14 +952,12 @@ def rental_property_detail(request, property_id):
         while cur <= anchor_month_start:
             month_starts.append(cur)
             cur = add_months(cur, 1)
-
     elif range_key == "ytd":
         start = date(anchor_month_start.year, 1, 1)
         cur = start
         while cur <= anchor_month_start:
             month_starts.append(cur)
             cur = add_months(cur, 1)
-
     elif range_key == "prev_year":
         prev_year = anchor_month_start.year - 1
         cur = date(prev_year, 1, 1)
@@ -922,7 +965,6 @@ def rental_property_detail(request, property_id):
         while cur <= end:
             month_starts.append(cur)
             cur = add_months(cur, 1)
-
     elif range_key == "all":
         earliest_income = (
             Income.objects.filter(rental_unit__property=prop)
@@ -936,48 +978,44 @@ def rental_property_detail(request, property_id):
             .values_list("date", flat=True)
             .first()
         )
-
         earliest = earliest_income or earliest_expense
         if earliest_income and earliest_expense:
             earliest = min(earliest_income, earliest_expense)
-
         start = date(earliest.year, earliest.month, 1) if earliest else anchor_month_start
-
         cur = start
         while cur <= anchor_month_start:
             month_starts.append(cur)
             cur = add_months(cur, 1)
-
     else:
+        # default last 6 months
         start = add_months(anchor_month_start, -5)
         cur = start
         while cur <= anchor_month_start:
             month_starts.append(cur)
             cur = add_months(cur, 1)
 
-    month_starts = list(reversed(month_starts))
+    month_starts_chrono = sorted(month_starts)
 
+    # -----------------------
+    # Monthly cashflow + trend
+    # -----------------------
     month_rows = []
     trend_labels = []
     trend_income = []
     trend_expenses = []
     trend_net = []
 
-    month_starts_chrono = list(reversed(month_starts))
-
-    for m in month_starts_chrono:
-        start = date(m.year, m.month, 1)
-        end = date(m.year, m.month, monthrange(m.year, m.month)[1])
+    for m_start in month_starts_chrono:
+        start = date(m_start.year, m_start.month, 1)
+        end = date(m_start.year, m_start.month, monthrange(m_start.year, m_start.month)[1])
 
         incomes_qs = (
-            Income.objects
-            .filter(rental_unit__property=prop, date__range=(start, end))
+            Income.objects.filter(rental_unit__property=prop, date__range=(start, end))
             .select_related("bank_account", "rental_unit", "income_category")
             .order_by("-date", "-id")
         )
         expenses_qs = (
-            Expense.objects
-            .filter(rental_unit__property=prop, date__range=(start, end))
+            Expense.objects.filter(rental_unit__property=prop, date__range=(start, end))
             .select_related("bank_account", "rental_unit", "category", "cra_category")
             .order_by("-date", "-id")
         )
@@ -987,7 +1025,7 @@ def rental_property_detail(request, property_id):
         net_total = income_total - expense_total
 
         month_rows.append({
-            "month": m,
+            "month": m_start,
             "incomes": incomes_qs,
             "expenses": expenses_qs,
             "income_total": income_total,
@@ -995,7 +1033,7 @@ def rental_property_detail(request, property_id):
             "net_total": net_total,
         })
 
-        trend_labels.append(m.strftime("%b %Y"))
+        trend_labels.append(m_start.strftime("%b %Y"))
         trend_income.append(float(income_total))
         trend_expenses.append(float(expense_total))
         trend_net.append(float(net_total))
@@ -1015,6 +1053,210 @@ def rental_property_detail(request, property_id):
         ("all", "All time"),
     ]
 
+    # -----------------------
+    # Mortgage panels: YTD ledger + projections + history
+    # -----------------------
+    anchor_year = year
+    anchor_month_end = date(year, month, monthrange(year, month)[1])
+
+    mortgage_panels = []
+
+    for mortgage in prop.mortgages.filter(is_active=True).order_by("name"):
+        principal_categories = mortgage.principal_categories()
+        interest_category_id = getattr(mortgage, "interest_category_id", None)
+
+        principal_ytd = Decimal("0.00")
+        interest_ytd = Decimal("0.00")
+        ledger_rows = []
+        projected_rows = []
+        chart_labels = []
+        chart_balances = []
+
+        history_years = []
+        history_principal = []
+        history_interest = []
+        history_total_principal = Decimal("0.00")
+        history_pct_of_original = None
+
+        if principal_categories:
+            # --- YTD ---
+            ytd_start = date(anchor_year, 1, 1)
+            ytd_end = anchor_month_end
+
+            principal_qs_ytd = Expense.objects.filter(
+                category__in=principal_categories,
+                date__gte=ytd_start,
+                date__lte=ytd_end,
+            )
+            principal_ytd = principal_qs_ytd.aggregate(
+                total=Coalesce(Sum("amount"), Decimal("0.00"))
+            )["total"]
+
+            if interest_category_id:
+                interest_qs_ytd = Expense.objects.filter(
+                    category_id=interest_category_id,
+                    date__gte=ytd_start,
+                    date__lte=ytd_end,
+                )
+                interest_ytd = interest_qs_ytd.aggregate(
+                    total=Coalesce(Sum("amount"), Decimal("0.00"))
+                )["total"]
+            else:
+                interest_qs_ytd = Expense.objects.none()
+                interest_ytd = Decimal("0.00")
+
+            # --- Ledger (current year) ---
+            principal_by_date = defaultdict(lambda: Decimal("0.00"))
+            prepayment_flag_by_date = defaultdict(lambda: False)
+            for exp in principal_qs_ytd.select_related("category").order_by("date", "id"):
+                principal_by_date[exp.date] += exp.amount
+                if mortgage.prepayment_category_id and exp.category_id == mortgage.prepayment_category_id:
+                    prepayment_flag_by_date[exp.date] = True
+
+            interest_by_date = defaultdict(lambda: Decimal("0.00"))
+            for exp in interest_qs_ytd.order_by("date", "id"):
+                interest_by_date[exp.date] += exp.amount
+
+            all_dates = sorted(set(principal_by_date.keys()) | set(interest_by_date.keys()))
+
+            balance_after_by_date = {}
+            base_balance = None
+            base_date = None
+
+            if (
+                mortgage.tracking_start_principal is not None
+                and mortgage.tracking_start_date is not None
+                and mortgage.tracking_start_date in all_dates
+            ):
+                base_date = mortgage.tracking_start_date
+                base_balance = (
+                    mortgage.tracking_start_principal
+                    + (mortgage.manual_adjustment or Decimal("0.00"))
+                )
+            elif mortgage.tracking_start_principal is not None and mortgage.tracking_start_date is not None and all_dates:
+                base_date = all_dates[0]
+                base_balance = (
+                    mortgage.tracking_start_principal
+                    + (mortgage.manual_adjustment or Decimal("0.00"))
+                )
+
+            if base_balance is not None and all_dates:
+                if base_date in all_dates:
+                    idx = all_dates.index(base_date)
+                    balance_after_by_date[base_date] = base_balance
+
+                    # Forward (later dates): subtract that day's principal
+                    for i in range(idx + 1, len(all_dates)):
+                        d = all_dates[i]
+                        prev_d = all_dates[i - 1]
+                        prev_bal = balance_after_by_date[prev_d]
+                        balance_after_by_date[d] = prev_bal - principal_by_date[d]
+
+                    # Backward (earlier dates): add next day's principal
+                    for i in range(idx - 1, -1, -1):
+                        d = all_dates[i]
+                        next_d = all_dates[i + 1]
+                        next_bal = balance_after_by_date[next_d]
+                        balance_after_by_date[d] = next_bal + principal_by_date[next_d]
+                else:
+                    # Simple forward pass (no good anchor)
+                    bal = base_balance
+                    for d in all_dates:
+                        bal = bal - principal_by_date[d]
+                        balance_after_by_date[d] = bal
+
+            for d in all_dates:
+                principal_amt = principal_by_date[d]
+                interest_amt = interest_by_date[d]
+                payment_total = principal_amt + interest_amt
+
+                if prepayment_flag_by_date[d] and interest_amt == 0:
+                    payment_type = "Prepayment"
+                elif principal_amt > 0 and interest_amt > 0:
+                    payment_type = "Regular payment"
+                elif principal_amt > 0:
+                    payment_type = "Principal-only"
+                elif interest_amt > 0:
+                    payment_type = "Interest-only"
+                else:
+                    payment_type = "Other"
+
+                balance_after = balance_after_by_date.get(d)
+
+                ledger_rows.append({
+                    "date": d,
+                    "payment_type": payment_type,
+                    "principal": principal_amt,
+                    "interest": interest_amt,
+                    "payment_total": payment_total,
+                    "balance_after": balance_after,
+                })
+
+            # --- Projections ---
+            last_balance = None
+            last_payment_date = None
+            for row in ledger_rows:
+                if row["balance_after"] is not None:
+                    last_balance = row["balance_after"]
+                    last_payment_date = row["date"]
+
+            if last_balance is not None and last_payment_date is not None:
+                projected_rows = mortgage.projected_rows_to_year_end(
+                    starting_balance=last_balance,
+                    last_payment_date=last_payment_date,
+                    year=anchor_year,
+                )
+
+            # --- Chart data (current year + projections) ---
+            for row in ledger_rows:
+                if row["balance_after"] is not None:
+                    chart_labels.append(row["date"].isoformat())
+                    chart_balances.append(float(row["balance_after"]))
+            for row in projected_rows:
+                chart_labels.append(row["date"].isoformat())
+                chart_balances.append(float(row["balance_after"]))
+
+            # --- History: principal & interest by year (all time) ---
+            principal_all = Expense.objects.filter(category__in=principal_categories)
+            principal_by_year = defaultdict(lambda: Decimal("0.00"))
+            for exp in principal_all.only("date", "amount"):
+                principal_by_year[exp.date.year] += exp.amount
+
+            interest_by_year = defaultdict(lambda: Decimal("0.00"))
+            if interest_category_id:
+                interest_all = Expense.objects.filter(category_id=interest_category_id)
+                for exp in interest_all.only("date", "amount"):
+                    interest_by_year[exp.date.year] += exp.amount
+
+            all_years = sorted(set(principal_by_year.keys()) | set(interest_by_year.keys()))
+            running = Decimal("0.00")
+            for y in all_years:
+                p = principal_by_year[y]
+                i = interest_by_year[y]
+                running += p
+                history_years.append(y)
+                history_principal.append(float(p))
+                history_interest.append(float(i))
+                history_total_principal = running
+
+            if mortgage.original_principal and mortgage.original_principal > 0 and history_total_principal > 0:
+                history_pct_of_original = (history_total_principal / mortgage.original_principal) * Decimal("100.0")
+
+        mortgage_panels.append({
+            "mortgage": mortgage,
+            "principal_ytd": principal_ytd,
+            "interest_ytd": interest_ytd,
+            "ledger_rows": ledger_rows,
+            "projected_rows": projected_rows,
+            "chart_labels": chart_labels,
+            "chart_balances": chart_balances,
+            "history_years": history_years,
+            "history_principal": history_principal,
+            "history_interest": history_interest,
+            "history_total_principal": history_total_principal,
+            "history_pct_of_original": history_pct_of_original,
+        })
+
     context = {
         "property": prop,
         "selected_month": f"{year:04d}-{month:02d}",
@@ -1028,8 +1270,15 @@ def rental_property_detail(request, property_id):
         "range_income_total": range_income_total,
         "range_expense_total": range_expense_total,
         "range_net_total": range_net_total,
+        "mortgage_panels": mortgage_panels,
     }
     return render(request, "rental_property_detail.html", context)
+
+
+
+
+
+
 
 def rental_tax_summary(request, property_id):
     """
@@ -1824,7 +2073,41 @@ def withholding_overview(request):
         .filter(is_withholding_account=True, is_active=True)
         .prefetch_related("withholding_categories__transactions")
     )
-    return render(request, "withholding_overview.html", {"accounts": accounts})
+
+    payout_form = WithholdingPayoutForm(request.POST or None)
+
+    if request.method == "POST":
+        if payout_form.is_valid():
+            category = payout_form.cleaned_data["withholding_category"]
+            date_val = payout_form.cleaned_data["date"]
+            amount = payout_form.cleaned_data["amount"]
+            note = payout_form.cleaned_data["note"]
+
+            # 🔑 EXACT SAME SEMANTICS AS CSV IMPORT
+            WithholdingTransaction.objects.create(
+                category=category,
+                date=date_val,
+                amount=-amount,  # payout = negative
+                note=note or "",
+            )
+
+            messages.success(
+                request,
+                f"Payout of ${amount} recorded from '{category.name}'."
+            )
+            return redirect("withholding_overview")
+
+        else:
+            messages.error(request, "Please correct the payout form errors.")
+
+    return render(
+        request,
+        "withholding_overview.html",
+        {
+            "accounts": accounts,
+            "payout_form": payout_form,
+        },
+    )
 
 def withholding_category_detail(request, pk):
     category = get_object_or_404(
