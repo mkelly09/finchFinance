@@ -1,0 +1,360 @@
+{% extends 'base.html' %}
+{% load humanize %}
+
+{% block content %}
+<div class="container mt-4">
+  <h1 class="finch-page-header">
+    📥 Unassigned Transactions
+    {% if incomes or expenses %}
+      <span class="finch-badge finch-badge-warning ms-2">{{ incomes|length|add:expenses|length }} to assign</span>
+    {% endif %}
+  </h1>
+  <p class="finch-page-subtitle">
+    This is a temporary cleanup page. It lists Income and Expense rows that do not have a bank account.
+    You can assign accounts row by row, auto-assign using rules, reclassify some expenses as transfers,
+    attach withholding buckets to transfers, and run a few targeted cleanup helpers.
+  </p>
+
+  {% if messages %}
+    {% for message in messages %}
+      <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
+        {{ message }}
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+      </div>
+    {% endfor %}
+  {% endif %}
+
+  <!-- Auto-assign rules -->
+  <div class="finch-card">
+    <div class="finch-card-header gradient-purple">
+      <h5 class="mb-0">🤖 Auto-assign using rules</h5>
+    </div>
+      <p class="small text-muted mb-2">
+        This will:
+      </p>
+      <ul class="small text-muted mb-2">
+        <li>Set <strong>all unassigned incomes</strong> to <code>TD CHEQUINGS</code>.</li>
+        <li>Set some unassigned expenses to <code>TD CHEQUINGS</code> or <code>TD AEROPLAN VISA</code>
+            based on category and vendor (e.g. Groceries at Costco → Chequings, other Groceries → Visa).</li>
+        <li><strong>Skip</strong> categories that are handled by the transfer reclassification step
+            (Arnprior Property Tax, RRSP Contributions, Foxview Down Payment Savings,
+            Arnprior Rental Tax Withholding (LOFT/MAIN)).</li>
+        <li>Never change any transaction that already has a bank account.</li>
+      </ul>
+      <form method="post" class="mb-0">
+        {% csrf_token %}
+        <input type="hidden" name="auto_assign" value="1">
+        <button type="submit" class="btn btn-primary finch-btn">
+          ⚡ Apply auto-assign rules
+        </button>
+      </form>
+  </div>
+
+  <!-- Reclassify as transfers / fix expenses -->
+  <div class="finch-card">
+    <div class="finch-card-header gradient-red">
+      <h5 class="mb-0">🔄 Reclassify certain expenses as transfers &amp; fix others</h5>
+    </div>
+      <p class="small text-muted mb-2">
+        This will:
+      </p>
+      <ul class="small text-muted mb-2">
+        <li><strong>Arnprior Property Tax</strong>:
+          for amounts ≤ $550.00, convert to a <code>Transfer</code> from
+          <code>TD CHEQUINGS</code> to <code>Wealthsimple Cash</code>.
+          Amounts &gt; $550 are left as expenses for manual review.</li>
+        <li><strong>RRSP Contributions</strong>:
+          convert to a <code>Transfer</code> from <code>TD CHEQUINGS</code> to
+          <code>Wealthsimple RRSP</code>.</li>
+        <li><strong>Foxview Insurance</strong> payments of exactly $250.00:
+          convert to a <code>Transfer</code> from <code>TD CHEQUINGS</code>
+          to <code>Wealthsimple Cash</code>.</li>
+        <li><strong>Foxview Down Payment Savings</strong> and
+            <strong>Arnprior Rental Tax Withholding (LOFT/MAIN)</strong>:
+            always convert to a <code>Transfer</code> from
+            <code>TD CHEQUINGS</code> to <code>Wealthsimple Cash</code> (no threshold).</li>
+        <li>For the above categories, the original expense rows are deleted after transfers are created.</li>
+        <li>Also fixes some categories that remain as expenses:
+          <ul>
+            <li><strong>Arnprior Snow Removal, Foxview Property Tax, Subaru Insurance,
+                Arnprior Heat, Foxview Internet</strong> → expense on <code>TD CHEQUINGS</code>.</li>
+            <li><strong>Cell Phone, Arnprior Internet, Foxview Heat,
+                Digital Subscriptions, Restaurants</strong> → expense on <code>TD AEROPLAN VISA</code>.</li>
+          </ul>
+        </li>
+        <li>Only affects expenses with <strong>no bank account</strong> set. Existing assignments are not changed.</li>
+      </ul>
+      <form method="post" class="mb-0">
+        {% csrf_token %}
+        <input type="hidden" name="reclassify_transfers" value="1">
+        <button type="submit" class="btn btn-danger finch-btn">
+          🔄 Reclassify &amp; fix expenses
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Attach withholding buckets to reclassified transfers -->
+  <div class="finch-card">
+    <div class="finch-card-header gradient-cyan">
+      <h5 class="mb-0">🪣 Attach buckets to reclassified transfers</h5>
+    </div>
+      <p class="small text-muted mb-2">
+        This looks at <code>Transfer</code> rows whose description starts with
+        <code>Reclassified from expense:</code> and can auto-link some of them to withholding buckets.
+      </p>
+      <ul class="small text-muted mb-2">
+        <li><strong>Reclassified from expense: Arnprior Property Tax</strong> →
+            bucket <code>Arnprior Property Tax</code>.</li>
+        <li><strong>Reclassified from expense: Arnprior Rental Tax Withholding (MAIN)</strong> or
+            <strong>(LOFT)</strong> →
+            bucket <code>Arnprior Rental Income Tax</code>.</li>
+        <li><strong>Reclassified from expense: Foxview Insurance</strong> →
+            bucket <code>Foxview Insurance</code>.</li>
+        <li>Other descriptions are left without a bucket for now.</li>
+      </ul>
+
+      {% if bucket_preview %}
+        <div class="alert alert-info mb-3">
+          Preview below shows which transfers will receive buckets. Review carefully,
+          then click <strong>Apply these assignments</strong> if it looks correct.
+        </div>
+      {% endif %}
+
+      <form method="post" class="mb-2 d-inline">
+        {% csrf_token %}
+        <input type="hidden" name="assign_transfer_buckets_preview" value="1">
+        <button type="submit" class="btn btn-sm btn-outline-secondary">
+          Preview bucket assignments
+        </button>
+      </form>
+
+      {% if bucket_preview %}
+        <form method="post" class="mb-0 d-inline ms-2">
+          {% csrf_token %}
+          <input type="hidden" name="assign_transfer_buckets_apply" value="1">
+          <button type="submit" class="btn btn-sm btn-primary">
+            Apply these assignments
+          </button>
+        </form>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Foxview Insurance cleanup -->
+  <div class="finch-card">
+    <div class="finch-card-header gradient-green">
+      <h5 class="mb-0">🏠 Foxview Insurance cleanup</h5>
+    </div>
+      <p class="small text-muted mb-2">
+        This helper cleans up historical <strong>Foxview Insurance</strong> entries so that the bucket
+        matches both the real cash movements and the legacy ledger:
+      </p>
+      <ul class="small text-muted mb-2">
+        <li>Finds <strong>Foxview Insurance</strong> expenses on <code>TD CHEQUINGS</code> with amounts of
+            <code>$250.00</code> or <code>$500.00</code> and converts them into
+            <code>Transfer</code> rows from <code>TD CHEQUINGS</code> to
+            <code>Wealthsimple Cash</code>, tagged to the <code>Foxview Insurance</code> withholding bucket.</li>
+        <li>For the Foxview Insurance bucket, looks at legacy ledger entries with
+            <strong>negative amounts</strong> (payouts). For each one that does not already have a matching
+            expense, creates a <strong>Foxview Insurance</strong> <code>Expense</code> on
+            <code>TD CHEQUINGS</code>, funded from that bucket.</li>
+        <li>Use this once after you've imported historical data, to bring the derived view in line
+            with the legacy ledger.</li>
+      </ul>
+      <form method="post" class="mb-0">
+        {% csrf_token %}
+        <input type="hidden" name="fix_foxview_insurance" value="1">
+        <button type="submit" class="btn btn-sm btn-outline-primary">
+          Run Foxview Insurance cleanup
+        </button>
+      </form>
+    </div>
+  </div>
+
+  {% if bucket_preview %}
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="card-body">
+      <div class="finch-card-header gradient-purple">
+        <h5 class="mb-0">👁️ Preview: proposed bucket assignments</h5>
+      </div>
+        {% if bucket_preview %}
+          <div class="table-responsive">
+            <table class="table finch-table table-sm align-middle">
+              <thead>
+                <tr>
+                  <th style="width: 130px;">Date</th>
+                  <th style="width: 140px;" class="text-end">Amount</th>
+                  <th>Description</th>
+                  <th style="width: 220px;">Proposed bucket</th>
+                  <th>Rule</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in bucket_preview %}
+                  <tr>
+                    <td>{{ row.transfer.date }}</td>
+                    <td class="text-end">${{ row.transfer.amount|floatformat:2|intcomma }}</td>
+                    <td>{{ row.transfer.description }}</td>
+                    <td>
+                      {% if row.proposed_bucket %}
+                        {{ row.proposed_bucket.name }}
+                      {% else %}
+                        <span class="text-muted">None (will be skipped)</span>
+                      {% endif %}
+                    </td>
+                    <td class="small {% if row.will_change %}text-success{% else %}text-muted{% endif %}">
+                      {{ row.rule }}
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p class="text-muted mb-0">No transfers matched the preview filter.</p>
+        {% endif %}
+      </div>
+    </div>
+  {% endif %}
+
+  <!-- Unassigned Incomes -->
+  <div class="finch-card">
+    <div class="finch-card-header gradient-green">
+      <h4 class="mb-0">💰 Incomes without a bank account</h4>
+    </div>
+      {% if incomes %}
+        <div class="table-responsive">
+          <table class="table finch-table table-sm align-middle">
+            <thead>
+              <tr>
+                <th style="width: 130px;">Date</th>
+                <th style="width: 200px;">Category / Source</th>
+                <th style="width: 140px;" class="text-end">Amount</th>
+                <th>Description / Notes</th>
+                <th style="width: 260px;">Assign bank account</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for income in incomes %}
+                <tr>
+                  <td>{{ income.date }}</td>
+                  <td>
+                    {% if income.income_category %}
+                      {{ income.income_category.name }}
+                    {% elif income.category %}
+                      {{ income.category }}
+                    {% else %}
+                      <span class="text-muted">Uncategorized</span>
+                    {% endif %}
+                  </td>
+                  <td class="text-end"><span class="amount-income">${{ income.amount|floatformat:2|intcomma }}</span></td>
+                  <td>
+                    {% if income.notes %}
+                      {{ income.notes }}
+                    {% else %}
+                      <span class="text-muted">—</span>
+                    {% endif %}
+                  </td>
+                  <td>
+                    <form method="post" class="d-flex gap-2 align-items-center mb-0">
+                      {% csrf_token %}
+                      <input type="hidden" name="assign_income_id" value="{{ income.id }}">
+                      <select name="bank_account" class="form-select form-select-sm">
+                        <option value="">— Select account —</option>
+                        {% for account in accounts %}
+                          <option value="{{ account.id }}">{{ account.name }}</option>
+                        {% endfor %}
+                      </select>
+                      <button type="submit" class="btn btn-sm btn-primary">Save</button>
+                    </form>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="finch-empty-state">
+          <div class="finch-empty-icon">🎉</div>
+          <h3>All Incomes Assigned!</h3>
+          <p>No income rows are missing a bank account.</p>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Unassigned Expenses -->
+  <div class="finch-card">
+    <div class="finch-card-header gradient-red">
+      <h4 class="mb-0">💸 Expenses without a bank account</h4>
+    </div>
+      {% if expenses %}
+        <div class="table-responsive">
+          <table class="table finch-table table-sm align-middle">
+            <thead>
+              <tr>
+                <th style="width: 130px;">Date</th>
+                <th style="width: 220px;">Vendor / Category</th>
+                <th style="width: 140px;" class="text-end">Amount</th>
+                <th>Notes</th>
+                <th style="width: 260px;">Assign bank account</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for expense in expenses %}
+                <tr>
+                  <td>{{ expense.date }}</td>
+                  <td>
+                    {% if expense.vendor_name %}
+                      {{ expense.vendor_name }}
+                    {% else %}
+                      <span class="text-muted">Unknown vendor</span>
+                    {% endif %}
+                    {% if expense.category %}
+                      <span class="text-muted"> — {{ expense.category.name }}</span>
+                    {% endif %}
+                  </td>
+                  <td class="text-end"><span class="amount-expense">${{ expense.amount|floatformat:2|intcomma }}</span></td>
+                  <td>
+                    {% if expense.notes %}
+                      {{ expense.notes }}
+                    {% else %}
+                      <span class="text-muted">—</span>
+                    {% endif %}
+                  </td>
+                  <td>
+                    <form method="post" class="d-flex gap-2 align-items-center mb-0">
+                      {% csrf_token %}
+                      <input type="hidden" name="assign_expense_id" value="{{ expense.id }}">
+                      <select name="bank_account" class="form-select form-select-sm">
+                        <option value="">— Select account —</option>
+                        {% for account in accounts %}
+                          <option value="{{ account.id }}">{{ account.name }}</option>
+                        {% endfor %}
+                      </select>
+                      <button type="submit" class="btn btn-sm btn-primary">Save</button>
+                    </form>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="finch-empty-state">
+          <div class="finch-empty-icon">🎉</div>
+          <h3>All Expenses Assigned!</h3>
+          <p>No expense rows are missing a bank account.</p>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="mt-4">
+    <a href="{% url 'dashboard' %}" class="btn btn-outline-secondary finch-btn">
+      ← Back to dashboard
+    </a>
+  </div>
+</div>
+{% endblock %}

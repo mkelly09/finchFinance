@@ -27,7 +27,8 @@
 
 <div class="container my-4">
 
-    <h1 class="mb-4">Import Transactions from CSV</h1>
+    <h1 class="finch-page-header">📥 Import Transactions from CSV</h1>
+    <p class="finch-page-subtitle">Upload bank statements to automatically categorize and import transactions.</p>
 
     {% if messages %}
         {% for message in messages %}
@@ -39,8 +40,10 @@
 
     {% if step == "upload" %}
 
-        <div class="card">
-            <div class="card-body">
+        <div class="finch-card">
+            <div class="finch-card-header gradient-purple">
+                <h4 class="mb-0">📂 Upload CSV File</h4>
+            </div>
                 <form method="post" enctype="multipart/form-data" id="upload-form">
                     {% csrf_token %}
                     <input type="hidden" name="step" value="upload">
@@ -61,11 +64,11 @@
                         </div>
                     </div>
 
-                    <button type="submit" class="btn btn-primary" id="upload-submit-btn">
-                        Upload &amp; Preview
+                    <button type="submit" class="btn btn-primary finch-btn" id="upload-submit-btn">
+                        📤 Upload &amp; Preview
                     </button>
-                    <a href="{% url 'dashboard' %}" class="btn btn-secondary">
-                        Back to Dashboard
+                    <a href="{% url 'dashboard' %}" class="btn btn-outline-secondary finch-btn">
+                        ← Back to Dashboard
                     </a>
 
                     <!-- Loading indicator shown while CSV is being uploaded/parsed -->
@@ -74,19 +77,20 @@
                         Processing CSV… this may take a few seconds for larger files.
                     </div>
                 </form>
-            </div>
         </div>
 
         {% if recent_batches %}
-            <div class="mt-4">
-                <h4>Recent Imports</h4>
-                <p class="text-muted mb-2">
+            <div class="finch-card mt-4">
+                <div class="finch-card-header gradient-cyan">
+                    <h4 class="mb-0">📋 Recent Imports</h4>
+                </div>
+                <p class="text-muted mb-3">
                     The last {{ recent_batches|length }} import batches. Use this to confirm what date ranges
                     you've already imported for each account.
                 </p>
                 <div class="table-responsive">
-                    <table class="table table-sm table-striped align-middle">
-                        <thead class="table-light">
+                    <table class="table finch-table table-sm align-middle">
+                        <thead>
                             <tr>
                                 <th>Imported At</th>
                                 <th>Bank Account</th>
@@ -108,21 +112,21 @@
                                         {{ batch.earliest_date|date:"Y-m-d" }} &rarr;
                                         {{ batch.latest_date|date:"Y-m-d" }}
                                     </td>
-                                    <td>
+                                    <td class="amount-income">
                                         ${{ batch.total_income_amount|floatformat:2|intcomma }}
                                     </td>
-                                    <td>
+                                    <td class="amount-expense">
                                         ${{ batch.total_expense_amount|floatformat:2|intcomma }}
                                     </td>
-                                    <td>
+                                    <td class="amount-net">
                                         ${{ batch.net_amount|floatformat:2|intcomma }}
                                     </td>
                                     <td>{{ batch.total_transactions }}</td>
                                     <td>{{ batch.filename }}</td>
                                     <td class="text-end">
                                         <a href="{% url 'import_batch_detail' batch.id %}"
-                                           class="btn btn-sm btn-outline-secondary">
-                                            View details
+                                           class="btn btn-sm btn-outline-secondary finch-btn-sm">
+                                            📊 View details
                                         </a>
                                     </td>
                                 </tr>
@@ -131,9 +135,14 @@
                     </table>
                 </div>
             </div>
+        </div>
         {% else %}
-            <div class="mt-4 text-muted small">
-                No imports recorded yet. Once you import your first CSV, recent batches will appear here.
+            <div class="finch-card mt-4">
+                <div class="finch-empty-state">
+                    <div class="finch-empty-icon">📥</div>
+                    <h3>No Imports Yet</h3>
+                    <p>Once you import your first CSV, recent batches will appear here.</p>
+                </div>
             </div>
         {% endif %}
 
@@ -162,23 +171,25 @@
     {% elif step == "review" %}
 
         {% if selected_bank_account %}
-            <div class="alert alert-info mb-3">
-                Bank account for this import:
-                <strong>{{ selected_bank_account }}</strong>
+            <div class="finch-alert finch-alert-info mb-3">
+                <strong>Bank account for this import:</strong> {{ selected_bank_account }}
             </div>
         {% endif %}
 
-        <div class="mb-3">
-            <p class="mb-1">
+        <div class="finch-card mb-3">
+            <div class="finch-card-header gradient-purple">
+                <h5 class="mb-0">📝 Review Transactions</h5>
+            </div>
+            <p class="mb-2">
                 Review each transaction. You can:
             </p>
-            <ul class="mb-1">
+            <ul class="mb-2">
                 <li>Change type, category, amount, location, notes</li>
                 <li><strong>Split</strong> a row into two parts (e.g., principal &amp; interest)</li>
                 <li><strong>Skip</strong> rows you don't want to import</li>
             </ul>
             <small class="text-muted">
-                Color legend:
+                <strong>Color legend:</strong>
                 <span class="px-2" style="background-color:#fff9d6;">Auto</span>,
                 <span class="px-2" style="background-color:#f0f0f0;">Uncategorized</span>,
                 <span class="px-2" style="background-color:#e6ffe6;">Manual/Confirmed</span>,
@@ -198,8 +209,8 @@
             {% endif %}
             {{ formset.management_form }}
 
-            <table class="table table-sm table-bordered align-middle" id="import-table">
-                <thead class="table-light">
+            <table class="table finch-table table-sm table-bordered align-middle" id="import-table">
+                <thead>
                 <tr>
                     <th>Type</th>
                     <th>Date</th>
@@ -238,6 +249,16 @@
                             </div>
                             <div class="income-wrapper">
                                 {{ form.income_source }}
+                            </div>
+                            <div class="transfer-wrapper" style="display: none;">
+                                <div class="mb-1">
+                                    <label class="form-label small">From:</label>
+                                    {{ form.from_account }}
+                                </div>
+                                <div>
+                                    <label class="form-label small">To:</label>
+                                    {{ form.to_account }}
+                                </div>
                             </div>
                         </td>
 
@@ -298,15 +319,15 @@
                 </small>
             </div>
 
-            <button type="submit" class="btn btn-success">
-                Import Transactions
+            <button type="submit" class="btn btn-success finch-btn">
+                ✅ Import Transactions
             </button>
 
-            <a href="{% url 'import_transactions' %}" class="btn btn-secondary">
-                Start Over
+            <a href="{% url 'import_transactions' %}" class="btn btn-secondary finch-btn">
+                🔄 Start Over
             </a>
-            <a href="{% url 'dashboard' %}" class="btn btn-outline-secondary">
-                Cancel
+            <a href="{% url 'dashboard' %}" class="btn btn-outline-secondary finch-btn">
+                ✖️ Cancel
             </a>
         </form>
 
@@ -328,27 +349,41 @@
                     const typeSelect = row.querySelector("select[name$='entry_type']");
                     const expenseWrapper = row.querySelector(".expense-wrapper");
                     const incomeWrapper = row.querySelector(".income-wrapper");
-                    if (!typeSelect || !expenseWrapper || !incomeWrapper) return;
+                    const transferWrapper = row.querySelector(".transfer-wrapper");
 
-                    const isIncome = typeSelect.value === "income";
+                    if (!typeSelect || !expenseWrapper || !incomeWrapper || !transferWrapper) return;
 
+                    const entryType = typeSelect.value;
+
+                    // Hide all wrappers
+                    expenseWrapper.style.display = "none";
+                    incomeWrapper.style.display = "none";
+                    transferWrapper.style.display = "none";
+
+                    // Show appropriate wrapper
+                    if (entryType === "expense") {
+                        expenseWrapper.style.display = "";
+                    } else if (entryType === "income") {
+                        incomeWrapper.style.display = "";
+                    } else if (entryType === "transfer") {
+                        transferWrapper.style.display = "";
+                    }
+
+                    // Update rental unit visibility
                     const expRental = row.querySelector(".expense-rental-wrapper");
                     const incRental = row.querySelector(".income-rental-wrapper");
                     if (expRental && incRental) {
-                        if (isIncome) {
+                        if (entryType === "income") {
                             expRental.style.display = "none";
                             incRental.style.display = "";
-                        } else {
+                        } else if (entryType === "expense") {
                             expRental.style.display = "";
                             incRental.style.display = "none";
+                        } else {
+                            // Transfer: hide both rental units
+                            expRental.style.display = "none";
+                            incRental.style.display = "none";
                         }
-                    }
-                    if (isIncome) {
-                        expenseWrapper.style.display = "none";
-                        incomeWrapper.style.display = "";
-                    } else {
-                        expenseWrapper.style.display = "";
-                        incomeWrapper.style.display = "none";
                     }
                 }
 
@@ -357,9 +392,11 @@
                     const whCol = row.querySelector(".withholding-col");
                     if (!typeSelect || !whCol) return;
 
-                    const isExpense = typeSelect.value === "expense";
-                    whCol.style.visibility = isExpense ? "visible" : "hidden";
-                    whCol.style.pointerEvents = isExpense ? "" : "none";
+                    const entryType = typeSelect.value;
+                    // Show for expense AND transfer, hide for income
+                    const shouldShow = entryType === "expense" || entryType === "transfer";
+                    whCol.style.visibility = shouldShow ? "visible" : "hidden";
+                    whCol.style.pointerEvents = shouldShow ? "" : "none";
                 }
 
                 function getSplitGroupId(row) {
@@ -453,6 +490,8 @@
                     const typeSelect = row.querySelector("select[name$='entry_type']");
                     const expenseSelect = row.querySelector("select[name$='expense_category']");
                     const incomeSelect = row.querySelector("select[name$='income_source']");
+                    const fromAccountSelect = row.querySelector("select[name$='from_account']");
+                    const toAccountSelect = row.querySelector("select[name$='to_account']");
 
                     const autoInitial = row.dataset.autoInitial === "1";
                     const userChanged = row.dataset.userChanged === "1";
@@ -463,6 +502,10 @@
                         currentCat = expenseSelect ? (expenseSelect.value || "") : "";
                     } else if (typeSelect && typeSelect.value === "income") {
                         currentCat = incomeSelect ? (incomeSelect.value || "") : "";
+                    } else if (typeSelect && typeSelect.value === "transfer") {
+                        // Transfer is "categorized" if it has at least one account
+                        currentCat = (fromAccountSelect && fromAccountSelect.value) ||
+                                     (toAccountSelect && toAccountSelect.value) ? "1" : "";
                     }
 
                     row.classList.remove("row-auto", "row-uncat", "row-manual");
@@ -508,6 +551,38 @@
                     label.textContent = text;
                 }
 
+                function autoSelectRentalUnitFromExpenseCategory(row) {
+                    const typeSelect = row.querySelector("select[name$='entry_type']");
+                    if (!typeSelect || typeSelect.value !== "expense") return;
+
+                    const categorySelect = row.querySelector("select[name$='expense_category']");
+                    const rentalUnitSelect = row.querySelector("select[name$='expense_rental_unit']");
+                    if (!categorySelect || !rentalUnitSelect) return;
+
+                    const categoryText = categorySelect.options[categorySelect.selectedIndex]?.text || "";
+
+                    // Check if category contains "Arnprior" or "Foxview"
+                    if (categoryText.includes("Arnprior")) {
+                        // Find and select rental unit containing "Arnprior" AND "Shared/Common"
+                        for (let i = 0; i < rentalUnitSelect.options.length; i++) {
+                            const optionText = rentalUnitSelect.options[i].text;
+                            if (optionText.includes("Arnprior") && optionText.includes("Shared/Common")) {
+                                rentalUnitSelect.value = rentalUnitSelect.options[i].value;
+                                break;
+                            }
+                        }
+                    } else if (categoryText.includes("Foxview")) {
+                        // Find and select rental unit containing "Foxview" AND "Shared/Common"
+                        for (let i = 0; i < rentalUnitSelect.options.length; i++) {
+                            const optionText = rentalUnitSelect.options[i].text;
+                            if (optionText.includes("Foxview") && optionText.includes("Shared/Common")) {
+                                rentalUnitSelect.value = rentalUnitSelect.options[i].value;
+                                break;
+                            }
+                        }
+                    }
+                }
+
                 function initRow(row) {
                     const typeSelect = row.querySelector("select[name$='entry_type']");
                     const skipBtn = row.querySelector(".skip-btn");
@@ -535,8 +610,14 @@
                     };
 
                     if (expenseSelect) {
-                        expenseSelect.addEventListener("change", markChangedAndRecolor);
+                        expenseSelect.addEventListener("change", () => {
+                            markChangedAndRecolor();
+                            autoSelectRentalUnitFromExpenseCategory(row);
+                        });
                         expenseSelect.addEventListener("click", markChangedAndRecolor);
+
+                        // Trigger on page load for auto-mapped categories
+                        autoSelectRentalUnitFromExpenseCategory(row);
                     }
 
                     if (incomeSelect) {
@@ -544,6 +625,20 @@
                             markChangedAndRecolor();
                         });
                         incomeSelect.addEventListener("click", markChangedAndRecolor);
+                    }
+
+                    // Add listeners for transfer account fields
+                    const fromAccountSelect = row.querySelector("select[name$='from_account']");
+                    const toAccountSelect = row.querySelector("select[name$='to_account']");
+
+                    if (fromAccountSelect) {
+                        fromAccountSelect.addEventListener("change", markChangedAndRecolor);
+                        fromAccountSelect.addEventListener("click", markChangedAndRecolor);
+                    }
+
+                    if (toAccountSelect) {
+                        toAccountSelect.addEventListener("change", markChangedAndRecolor);
+                        toAccountSelect.addEventListener("click", markChangedAndRecolor);
                     }
 
                     if (skipBtn && skipInput) {

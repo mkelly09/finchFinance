@@ -2,13 +2,157 @@
 {% load humanize %}
 
 {% block content %}
+<style>
+  .health-card {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border-radius: 12px;
+    padding: 24px;
+    color: white;
+    margin-bottom: 24px;
+  }
+
+  .health-card.positive {
+    background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+  }
+
+  .health-card.negative {
+    background: linear-gradient(135deg, #ee0979 0%, #ff6a00 100%);
+  }
+
+  .health-card h3 {
+    font-size: 1.2rem;
+    font-weight: 600;
+    margin-bottom: 16px;
+  }
+
+  .health-card .metric {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 8px;
+    font-size: 0.95rem;
+  }
+
+  .health-card .metric.balance {
+    font-size: 1.4rem;
+    font-weight: 700;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.3);
+  }
+</style>
+
 <div class="container mt-4">
+  <!-- Cash Flow Health Card -->
+  <div class="health-card {{ health_class }}">
+    <div class="row">
+      <div class="col-12">
+        <h3>{{ health_icon }} Cash Flow Health — {{ selected_month_display }}</h3>
+      </div>
+
+      <!-- INCOME SIDE -->
+      <div class="col-md-6">
+        <div style="font-weight: 600; font-size: 1.05rem; margin-bottom: 8px; opacity: 0.9;">💰 Income</div>
+        <div class="metric">
+          <span>Income (Actual):</span>
+          <strong>${{ total_income_actual|floatformat:2|intcomma }}</strong>
+        </div>
+        {% if jenna_transfers > 0 %}
+        <div class="metric">
+          <span>Jenna Transfers:</span>
+          <strong>+${{ jenna_transfers|floatformat:2|intcomma }}</strong>
+        </div>
+        {% endif %}
+        <div class="metric">
+          <span>Expected Remaining:</span>
+          <strong>+${{ total_income_remaining|floatformat:2|intcomma }}</strong>
+        </div>
+        <div class="metric" style="padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.2);">
+          <span>Total Projected:</span>
+          <strong>${{ total_projected_income|floatformat:2|intcomma }}</strong>
+        </div>
+      </div>
+
+      <!-- OUTFLOWS SIDE -->
+      <div class="col-md-6">
+        <div style="font-weight: 600; font-size: 1.05rem; margin-bottom: 8px; opacity: 0.9;">💸 Outflows</div>
+
+        <!-- Expenses -->
+        <div class="metric">
+          <span>Expenses (Spent):</span>
+          <strong>-${{ total_expenses_actual|floatformat:2|intcomma }}</strong>
+        </div>
+        <div class="metric">
+          <span>Expenses (Remaining Budget):</span>
+          <strong>-${{ total_expenses_remaining|floatformat:2|intcomma }}</strong>
+        </div>
+
+        <!-- Future Expense Buckets (withholdings) -->
+        {% if total_withholding_actual > 0 %}
+        <div class="metric" style="margin-top: 8px;">
+          <span>Future Expenses (Realized):</span>
+          <strong>-${{ total_withholding_actual|floatformat:2|intcomma }}</strong>
+        </div>
+        {% endif %}
+        {% if total_withholding_remaining > 0 %}
+        <div class="metric">
+          <span>Future Expenses (Planned):</span>
+          <strong>-${{ total_withholding_remaining|floatformat:2|intcomma }}</strong>
+        </div>
+        {% endif %}
+
+        <!-- Savings -->
+        {% if total_savings_actual > 0 %}
+        <div class="metric" style="margin-top: 8px;">
+          <span>Savings (Realized)*:</span>
+          <strong>-${{ total_savings_actual|floatformat:2|intcomma }}</strong>
+        </div>
+        {% endif %}
+        {% if total_savings_remaining > 0 %}
+        <div class="metric">
+          <span>Savings (Planned)*:</span>
+          <strong>-${{ total_savings_remaining|floatformat:2|intcomma }}</strong>
+        </div>
+        {% endif %}
+      </div>
+
+      <!-- FINAL BALANCE -->
+      <div class="col-12">
+        <div class="metric balance" style="border-top: 2px solid rgba(255,255,255,0.5); margin-top: 16px; font-size: 1.5rem;">
+          <span>💵 Available Cash (Projected):</span>
+          <strong>
+            {% if cash_flow_balance >= 0 %}
+              ${{ cash_flow_balance|floatformat:2|intcomma }}
+            {% else %}
+              -${{ cash_flow_balance|floatformat:2|intcomma|cut:"-" }}
+            {% endif %}
+          </strong>
+        </div>
+      </div>
+
+      {% if total_savings_actual > 0 or total_savings_remaining > 0 %}
+      <div class="col-12 mt-2">
+        <div style="font-size: 0.85rem; opacity: 0.9; font-style: italic;">
+          * Savings buckets: {{ savings_buckets|join:", "|title }}
+        </div>
+      </div>
+      {% endif %}
+
+      <div class="col-12 mt-2">
+        <div style="font-size: 0.85rem; opacity: 0.85; border-top: 1px solid rgba(255,255,255,0.2); padding-top: 8px;">
+          💡 <strong>Realized</strong> = money already set aside this month. <strong>Planned</strong> = remaining monthly target.
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="row align-items-end mb-3">
     <div class="col-lg-8">
       <h2>Category Progress — {{ selected_month_display }}</h2>
       <p class="text-muted mb-0">
-        Income progress shows received vs expected (monthly target). Expense progress shows spent vs monthly limit.
-        Click a category to drill into recent transactions.
+        Income progress shows received vs expected (monthly target).
+        Expense progress shows spent vs monthly limit.
+        Withholding progress shows <strong>this month's contributions vs monthly target</strong>.
+        Click a category or bucket to drill into detailed history.
       </p>
     </div>
     <div class="col-lg-4 mt-3 mt-lg-0">
@@ -26,7 +170,7 @@
 
   <div class="row g-4">
     <!-- INCOME -->
-    <div class="col-lg-6">
+    <div class="col-lg-4">
       <div class="card shadow-sm">
         <div class="card-body">
           <h4 class="card-title mb-3">Income</h4>
@@ -54,9 +198,9 @@
 
                 <div class="progress" style="height: 14px;">
                   <div
-                    class="progress-bar {{ item.bar_class }}"
+                    class="progress-bar"
                     role="progressbar"
-                    style="width: {% if item.percent > 140 %}140{% else %}{{ item.percent }}{% endif %}%"
+                    style="width: {% if item.percent > 140 %}140{% else %}{{ item.percent }}{% endif %}%; background-color: {{ item.bar_color }};"
                     aria-valuenow="{{ item.percent }}"
                     aria-valuemin="0"
                     aria-valuemax="100"
@@ -80,7 +224,7 @@
     </div>
 
     <!-- EXPENSE -->
-    <div class="col-lg-6">
+    <div class="col-lg-4">
       <div class="card shadow-sm">
         <div class="card-body">
           <h4 class="card-title mb-3">Expenses</h4>
@@ -103,9 +247,9 @@
 
                 <div class="progress" style="height: 14px;">
                   <div
-                    class="progress-bar {{ item.bar_class }}"
+                    class="progress-bar"
                     role="progressbar"
-                    style="width: {% if item.percent > 140 %}140{% else %}{{ item.percent }}{% endif %}%"
+                    style="width: {% if item.percent > 140 %}140{% else %}{{ item.percent }}{% endif %}%; background-color: {{ item.bar_color }};"
                     aria-valuenow="{{ item.percent }}"
                     aria-valuemin="0"
                     aria-valuemax="100"
@@ -119,6 +263,103 @@
             {% endfor %}
           {% else %}
             <p class="text-muted mb-0">No expense categories with monthly limits found.</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <!-- WITHHOLDING / TRANSFERS (monthly-first UX) -->
+    <div class="col-lg-4">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h4 class="card-title mb-3">Withholding / Transfers</h4>
+
+          {% if withholding_summaries %}
+            {% for item in withholding_summaries %}
+              <div class="mb-3">
+                <!-- Headline row: this month vs monthly target -->
+                <div class="d-flex justify-content-between">
+                  <div>
+                    <strong>
+                      <a href="{% url 'withholding_category_detail' item.id %}" class="text-decoration-none">
+                        {{ item.name }}
+                      </a>
+                    </strong>
+                  </div>
+                  <div class="text-end small">
+                    {% if item.monthly_target and item.monthly_target > 0 %}
+                      <div>
+                        This month:
+                        <strong>
+                          ${{ item.month_contrib|floatformat:2|intcomma }}
+                        </strong>
+                        /
+                        ${{ item.monthly_target|floatformat:2|intcomma }}
+                      </div>
+                    {% else %}
+                      <div>
+                        This month:
+                        <strong>
+                          ${{ item.month_contrib|floatformat:2|intcomma }}
+                        </strong>
+                      </div>
+                      <div class="text-muted">No monthly target</div>
+                    {% endif %}
+                  </div>
+                </div>
+
+                <!-- Progress bar: contributions vs monthly target -->
+                <div class="progress mt-1" style="height: 14px;">
+                  <div
+                    class="progress-bar"
+                    role="progressbar"
+                    style="width: {% if item.percent > 140 %}140{% else %}{{ item.percent }}{% endif %}%; background-color: {{ item.bar_color }};"
+                    aria-valuenow="{{ item.percent }}"
+                    aria-valuemin="0"
+                    aria-valuemax="100"
+                  ></div>
+                </div>
+
+                <!-- Supporting text: net this month + overall balance (secondary) -->
+                <div class="small text-muted mt-1 d-flex justify-content-between">
+                  <div>
+                    Net this month:
+                    {% if item.month_net > 0 %}
+                      <span class="text-success">
+                        +${{ item.month_net|floatformat:2|intcomma }}
+                      </span>
+                    {% elif item.month_net < 0 %}
+                      <span class="text-danger">
+                        −${{ item.month_net|floatformat:2|intcomma|cut:"-" }}
+                      </span>
+                    {% else %}
+                      $0.00
+                    {% endif %}
+                  </div>
+                  <div class="text-end">
+                    Balance:
+                    ${{ item.balance|floatformat:2|intcomma }}
+                    {% if item.overall_target and item.overall_target > 0 %}
+                      / ${{ item.overall_target|floatformat:2|intcomma }}
+                    {% else %}
+                      / <span class="text-muted">no overall target</span>
+                    {% endif %}
+                  </div>
+                </div>
+
+                <div class="small text-muted">
+                  {{ item.percent|floatformat:1 }}% of monthly target
+                  {% if item.monthly_target > item.month_contrib %}
+                    — ${{ item.monthly_target|floatformat:2|intcomma }} target,
+                    ${{ item.month_contrib|floatformat:2|intcomma }} contributed
+                  {% else %}
+                    — monthly target reached
+                  {% endif %}
+                </div>
+              </div>
+            {% endfor %}
+          {% else %}
+            <p class="text-muted mb-0">No withholding buckets with monthly targets defined.</p>
           {% endif %}
         </div>
       </div>

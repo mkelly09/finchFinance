@@ -3,20 +3,25 @@
 
 {% block content %}
 <div class="container mt-4">
-  <h3 class="mb-1">{{ property.name }} — {{ cra_category.name }}</h3>
-  <p class="text-muted">Year: {{ year }}</p>
+  <!-- Breadcrumb -->
+  <nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb finch-breadcrumb">
+      <li class="breadcrumb-item finch-breadcrumb-item"><a href="{% url 'rental_tax_summary' property.id %}?year={{ year }}">Tax Summary</a></li>
+      <li class="breadcrumb-item finch-breadcrumb-item active" aria-current="page">{{ cra_category.name }}</li>
+    </ol>
+  </nav>
 
-  <div class="mb-3">
-    <a class="btn btn-outline-secondary"
-       href="{% url 'rental_tax_summary' property.id %}?year={{ year }}">← Back to Tax Summary</a>
-  </div>
+  <h1 class="finch-page-header">📋 {{ property.name }} — {{ cra_category.name }}</h1>
+  <p class="finch-page-subtitle">Tax Year: {{ year }}</p>
 
-  <div class="card shadow-sm">
-    <div class="card-body">
+  <div class="finch-card mb-4">
+    <div class="finch-card-header gradient-red">
+      <h5 class="mb-0">💸 Category Expenses</h5>
+    </div>
       {% if expenses %}
         <div class="table-responsive">
-          <table class="table table-sm table-striped align-middle mb-0">
-            <thead class="table-light">
+          <table class="table finch-table table-sm align-middle mb-0">
+            <thead>
               <tr>
                 <th style="width: 120px;">Date</th>
                 <th>Vendor</th>
@@ -32,18 +37,26 @@
                   <td>{{ e.date|date:"Y-m-d" }}</td>
                   <td>{{ e.vendor_name }}</td>
                   <td>{% if e.rental_unit %}{{ e.rental_unit.property.name }} — {{ e.rental_unit.name }}{% else %}—{% endif %}</td>
-                  <td>${{ e.amount|floatformat:2|intcomma }}</td>
-                  <td>${{ e.personal_portion|floatformat:2|intcomma }}</td>
-                  <td><strong>${{ e.rental_portion|floatformat:2|intcomma }}</strong></td>
+                  <td><span class="amount-expense">${{ e.amount|floatformat:2|intcomma }}</span></td>
+                  <td><span class="amount-expense">${{ e.personal_portion|floatformat:2|intcomma }}</span></td>
+                  <td><strong class="amount-expense">${{ e.rental_portion|floatformat:2|intcomma }}</strong></td>
                 </tr>
               {% endfor %}
             </tbody>
           </table>
         </div>
       {% else %}
-        <p class="text-muted mb-0">No expenses in this CRA category for the selected year.</p>
+        <div class="finch-empty-state">
+          <div class="finch-empty-icon">📭</div>
+          <h3>No Expenses</h3>
+          <p>No expenses in this CRA category for the selected year.</p>
+        </div>
       {% endif %}
-    </div>
+  </div>
+
+  <div class="mt-4">
+    <a class="btn btn-outline-secondary finch-btn"
+       href="{% url 'rental_tax_summary' property.id %}?year={{ year }}">← Back to Tax Summary</a>
   </div>
 </div>
 {% endblock %}

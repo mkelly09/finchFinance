@@ -3,71 +3,79 @@
 
 {% block content %}
 <div class="container mt-4">
-  <h2>Import Batch #{{ batch.id }}</h2>
-  <p class="text-muted">
+  <!-- Breadcrumb -->
+  <nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb finch-breadcrumb">
+      <li class="breadcrumb-item finch-breadcrumb-item"><a href="{% url 'import_transactions' %}">Import</a></li>
+      <li class="breadcrumb-item finch-breadcrumb-item active" aria-current="page">Batch #{{ batch.id }}</li>
+    </ol>
+  </nav>
+
+  <h1 class="finch-page-header">📦 Import Batch #{{ batch.id }}</h1>
+  <p class="finch-page-subtitle">
     Imported at {{ batch.imported_at|date:"Y-m-d H:i" }}{% if batch.bank_account %} for
     <strong>{{ batch.bank_account }}</strong>{% endif %}.
   </p>
 
-  <div class="row mb-4">
-    <div class="col-md-4">
-      <div class="card border-0 shadow-sm mb-3">
-        <div class="card-body">
-          <h6 class="text-muted mb-1">Date Range</h6>
-          <p class="mb-0">
-            {{ batch.earliest_date|date:"Y-m-d" }}
-            &rarr;
-            {{ batch.latest_date|date:"Y-m-d" }}
-          </p>
+  <div class="row g-3 mb-4">
+    <div class="col-md-3">
+      <div class="finch-summary-card">
+        <div class="finch-summary-icon">💰</div>
+        <div class="finch-summary-label">Total Income</div>
+        <div class="finch-summary-value amount-income">
+          ${{ batch.total_income_amount|floatformat:2|intcomma }}
         </div>
       </div>
     </div>
-    <div class="col-md-8">
-      <div class="card border-0 shadow-sm mb-3">
-        <div class="card-body">
-          <div class="row text-center">
-            <div class="col">
-              <div class="text-muted small">Income</div>
-              <div class="fw-bold">
-                ${{ batch.total_income_amount|floatformat:2|intcomma }}
-              </div>
-            </div>
-            <div class="col">
-              <div class="text-muted small">Expenses</div>
-              <div class="fw-bold">
-                ${{ batch.total_expense_amount|floatformat:2|intcomma }}
-              </div>
-            </div>
-            <div class="col">
-              <div class="text-muted small">Net</div>
-              <div class="fw-bold {% if batch.net_amount < 0 %}text-danger{% else %}text-success{% endif %}">
-                ${{ batch.net_amount|floatformat:2|intcomma }}
-              </div>
-            </div>
-            <div class="col">
-              <div class="text-muted small">Transactions</div>
-              <div class="fw-bold">{{ batch.total_transactions }}</div>
-            </div>
-          </div>
+    <div class="col-md-3">
+      <div class="finch-summary-card">
+        <div class="finch-summary-icon">💸</div>
+        <div class="finch-summary-label">Total Expenses</div>
+        <div class="finch-summary-value amount-expense">
+          ${{ batch.total_expense_amount|floatformat:2|intcomma }}
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="finch-summary-card">
+        <div class="finch-summary-icon">📊</div>
+        <div class="finch-summary-label">Net Amount</div>
+        <div class="finch-summary-value {% if batch.net_amount < 0 %}amount-expense{% else %}amount-income{% endif %}">
+          ${{ batch.net_amount|floatformat:2|intcomma }}
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="finch-summary-card">
+        <div class="finch-summary-icon">🔢</div>
+        <div class="finch-summary-label">Transactions</div>
+        <div class="finch-summary-value amount-net">
+          {{ batch.total_transactions }}
         </div>
       </div>
     </div>
   </div>
 
+  <div class="finch-card mb-4">
+    <p class="mb-0"><strong>📅 Date Range:</strong> {{ batch.earliest_date|date:"Y-m-d" }} → {{ batch.latest_date|date:"Y-m-d" }}</p>
+  </div>
+
   {% if batch.filename %}
-    <p class="small text-muted">
-      Source file: <code>{{ batch.filename }}</code>
-    </p>
+    <div class="finch-card mb-4">
+      <p class="mb-0"><strong>📄 Source file:</strong> <code>{{ batch.filename }}</code></p>
+    </div>
   {% endif %}
 
-  <hr />
-
-  <div class="row">
+  <div class="row g-3">
     <div class="col-md-6">
-      <h4>Income in this batch</h4>
+      <div class="finch-card">
+        <div class="finch-card-header gradient-green">
+          <h5 class="mb-0">💰 Income in this batch</h5>
+        </div>
       {% if incomes %}
-        <table class="table table-sm table-striped align-middle">
-          <thead class="table-light">
+        <div class="table-responsive">
+        <table class="table finch-table table-sm align-middle mb-0">
+          <thead>
             <tr>
               <th>Date</th>
               <th>Source</th>
@@ -80,22 +88,31 @@
               <tr>
                 <td>{{ income.date|date:"Y-m-d" }}</td>
                 <td>{{ income.category }}</td>
-                <td>${{ income.amount|floatformat:2|intcomma }}</td>
+                <td><span class="amount-income">${{ income.amount|floatformat:2|intcomma }}</span></td>
                 <td>{{ income.notes }}</td>
               </tr>
             {% endfor %}
           </tbody>
         </table>
+        </div>
       {% else %}
-        <p class="text-muted small">No income transactions in this batch.</p>
+        <div class="finch-empty-state py-4">
+          <div class="finch-empty-icon">📭</div>
+          <p class="mb-0">No income transactions in this batch.</p>
+        </div>
       {% endif %}
+      </div>
     </div>
 
     <div class="col-md-6">
-      <h4>Expenses in this batch</h4>
+      <div class="finch-card">
+        <div class="finch-card-header gradient-red">
+          <h5 class="mb-0">💸 Expenses in this batch</h5>
+        </div>
       {% if expenses %}
-        <table class="table table-sm table-striped align-middle">
-          <thead class="table-light">
+        <div class="table-responsive">
+        <table class="table finch-table table-sm align-middle mb-0">
+          <thead>
             <tr>
               <th>Date</th>
               <th>Vendor</th>
@@ -110,21 +127,26 @@
                 <td>{{ expense.date|date:"Y-m-d" }}</td>
                 <td>{{ expense.vendor_name }}</td>
                 <td>{{ expense.category.name }}</td>
-                <td>${{ expense.amount|floatformat:2|intcomma }}</td>
+                <td><span class="amount-expense">${{ expense.amount|floatformat:2|intcomma }}</span></td>
                 <td>{{ expense.notes }}</td>
               </tr>
             {% endfor %}
           </tbody>
         </table>
+        </div>
       {% else %}
-        <p class="text-muted small">No expense transactions in this batch.</p>
+        <div class="finch-empty-state py-4">
+          <div class="finch-empty-icon">📭</div>
+          <p class="mb-0">No expense transactions in this batch.</p>
+        </div>
       {% endif %}
+      </div>
     </div>
   </div>
 
-  <div class="mt-3">
-    <a href="{% url 'import_transactions' %}" class="btn btn-outline-secondary">
-      Back to Import Transactions
+  <div class="mt-4">
+    <a href="{% url 'import_transactions' %}" class="btn btn-outline-secondary finch-btn">
+      ← Back to Import Transactions
     </a>
   </div>
 </div>

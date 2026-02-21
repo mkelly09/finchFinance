@@ -4,182 +4,159 @@
 {% block content %}
 <div class="container mt-4">
 
-  <a href="{% url 'withholding_overview' %}" class="text-decoration-none mb-3 d-inline-block">
-    &larr; Back to withholding overview
-  </a>
+  <!-- Breadcrumb -->
+  <nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb finch-breadcrumb">
+      <li class="breadcrumb-item finch-breadcrumb-item"><a href="{% url 'withholding_overview' %}">Withholding Overview</a></li>
+      <li class="breadcrumb-item finch-breadcrumb-item active" aria-current="page">{{ category.name }}</li>
+    </ol>
+  </nav>
 
-  <h1 class="h3 mb-2">{{ category.name }}</h1>
-  <div class="text-muted mb-4">
-    Account:
-    {% if category.account %}
-      {{ category.account.name }}
-    {% else %}
-      (none)
-    {% endif %}
-    <br>
-    Current balance: <strong>{{ category.balance|currency }}</strong><br>
-    Target:
+  <h1 class="finch-page-header">🪣 {{ category.name }}</h1>
+  <p class="finch-page-subtitle">
     {% if category.target_amount %}
-      {{ category.target_amount|currency }}
+      Target: <strong class="amount-net">{{ category.target_amount|currency }}</strong>
+      {% if category.next_due_date %}• Next due: {{ category.next_due_date }}{% endif %}
     {% else %}
-      <span class="text-muted">Not set</span>
-    {% endif %}<br>
-    Next due:
-    {% if category.next_due_date %}
-      {{ category.next_due_date }}
-    {% else %}
-      <span class="text-muted">Not set</span>
+      Withholding bucket transaction history
     {% endif %}
+  </p>
+
+  <!-- Date Range Selector -->
+  <div class="finch-card mb-4">
+    <div class="finch-card-header gradient-cyan">
+      <h5 class="mb-0">📅 Select Date Range</h5>
+    </div>
+      <form method="get" class="row g-3">
+        <div class="col-md-9">
+          <label for="range" class="finch-form-label">Time period</label>
+          <select name="range" id="range" class="form-select">
+            {% for key, label in range_options %}
+              <option value="{{ key }}" {% if selected_range == key %}selected{% endif %}>
+                {{ label }}
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-3 d-flex align-items-end">
+          <button type="submit" class="btn btn-primary finch-btn w-100">📊 Apply</button>
+        </div>
+      </form>
   </div>
 
-  <h2 class="h5">Transactions</h2>
+  <!-- Balance & Summary -->
+  <div class="finch-card mb-4">
+    <div class="finch-card-header gradient-purple">
+      <div class="d-flex justify-content-between align-items-center">
+        <h5 class="mb-0">💰 Balance & Activity</h5>
+        <div>
+          Total for period: <strong>{{ range_total|currency }}</strong>
+        </div>
+      </div>
+    </div>
+    <div class="row g-3">
+      <div class="col-md-6">
+        <div class="finch-summary-card border-start-purple">
+          <div class="finch-summary-icon">💰</div>
+          <div class="finch-summary-label">Current Balance</div>
+          <div class="finch-summary-value amount-net">
+            {{ derived_balance|currency }}
+          </div>
+        </div>
+      </div>
+      <div class="col-md-6">
+        <div class="finch-summary-card border-start-cyan">
+          <div class="finch-summary-icon">📊</div>
+          <div class="finch-summary-label">Account</div>
+          <div class="finch-summary-value" style="font-size: 1.2rem; color: #495057;">
+            {% if category.account %}
+              {{ category.account.name }}
+            {% else %}
+              <span class="text-muted">Not linked</span>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 
-  {% if rows %}
-    <table class="table table-sm table-striped align-middle">
-      <thead>
-        <tr>
-          <th style="width: 110px;">Date</th>
-          <th>Note</th>
-          <th class="text-end" style="width: 120px;">Amount</th>
-          <th class="text-end" style="width: 140px;">Balance after</th>
-          <th style="width: 80px;"></th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in rows %}
-          <tr>
-            <td>{{ row.tx.date }}</td>
-            <td>{{ row.tx.note }}</td>
-            <td class="text-end">
-              {% if row.tx.amount >= 0 %}
-                +{{ row.tx.amount|currency }}
-              {% else %}
-                -{{ row.tx.amount|negate|currency }}
-              {% endif %}
-            </td>
-            <td class="text-end">
-              {{ row.balance_after|currency }}
-            </td>
-            <td class="text-end">
-              <button
-                type="button"
-                class="btn btn-link p-0 btn-sm"
-                style="font-size: 0.85rem;"
-                data-tx-id="{{ row.tx.id }}"
-                data-tx-date="{{ row.tx.date|date:'Y-m-d' }}"
-                data-tx-amount="{{ row.tx.amount }}"
-                data-tx-note="{{ row.tx.note|escapejs }}"
-              >
-                Edit
-              </button>
-            </td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  {% else %}
-    <p>No transactions recorded for this bucket yet.</p>
-  {% endif %}
+  <!-- Transaction History -->
+  <div class="finch-card mb-4">
+    <div class="finch-card-header gradient-green">
+      <h5 class="mb-0">📜 Transaction History</h5>
+    </div>
+
+      {% if derived_rows %}
+        <div class="table-responsive">
+          <table class="table finch-table table-sm align-middle">
+            <thead>
+              <tr>
+                <th style="width: 120px;">Date</th>
+                <th style="width: 140px;">Type</th>
+                <th>Description</th>
+                <th class="text-end" style="width: 140px;">Amount</th>
+                <th style="width: 80px;">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in derived_rows %}
+                <tr>
+                  <td>{{ row.date|date:"Y-m-d" }}</td>
+                  <td>
+                    {% if row.kind == "transfer_in" %}
+                      <span class="badge bg-success-subtle text-success border border-success-subtle">Transfer in</span>
+                    {% elif row.kind == "transfer_out" %}
+                      <span class="badge bg-danger-subtle text-danger border border-danger-subtle">Transfer out</span>
+                    {% elif row.kind == "expense" %}
+                      <span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle">Expense</span>
+                    {% else %}
+                      <span class="badge bg-light text-muted border">Other</span>
+                    {% endif %}
+                  </td>
+                  <td>{{ row.description }}</td>
+                  <td class="text-end">
+                    {% if row.signed_amount >= 0 %}
+                      <span class="amount-income">+{{ row.signed_amount|currency }}</span>
+                    {% else %}
+                      <span class="amount-expense">-{{ row.signed_amount|negate|currency }}</span>
+                    {% endif %}
+                  </td>
+                  <td class="text-center">
+                    {% if row.expense_id %}
+                      <a href="{% url 'expense_edit' row.expense_id %}"
+                         class="btn btn-sm btn-outline-primary finch-btn-sm"
+                         title="Edit expense">
+                        ✏️
+                      </a>
+                    {% elif row.transfer_id %}
+                      <a href="{% url 'transfer_edit' row.transfer_id %}"
+                         class="btn btn-sm btn-outline-primary finch-btn-sm"
+                         title="Edit transfer">
+                        ✏️
+                      </a>
+                    {% else %}
+                      <span class="text-muted small">—</span>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="finch-empty-state">
+          <div class="finch-empty-icon">📭</div>
+          <h3>No Transactions in Period</h3>
+          <p>No transfers or expenses have been recorded for this bucket in the selected time period.</p>
+        </div>
+      {% endif %}
+  </div>
+
+  <div class="mt-4">
+    <a href="{% url 'withholding_overview' %}" class="btn btn-outline-secondary finch-btn">
+      ← Back to withholding overview
+    </a>
+  </div>
+
 </div>
-
-<!-- Backdrop -->
-<div id="modalBackdrop" style="
-  display: none;
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background-color: rgba(0, 0, 0, 0.5);
-  z-index: 999;
-"></div>
-
-<!-- Edit Withholding Transaction Modal -->
-<div id="editWithholdingModal" style="
-  display: none;
-  position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  background: white;
-  padding: 20px;
-  border-radius: 8px;
-  box-shadow: 0 4px 10px rgba(0,0,0,0.3);
-  z-index: 1000;
-  width: 500px;
-  max-width: 90%;
-">
-  <h3 class="mb-3">Edit Withholding Transaction</h3>
-  <form method="post" id="edit-withholding-form">
-    {% csrf_token %}
-    <div class="mb-2">
-      <label for="edit-date" class="form-label mb-1">Date:</label>
-      <input type="date" id="edit-date" name="date" class="form-control form-control-sm" required>
-    </div>
-    <div class="mb-2">
-      <label for="edit-amount" class="form-label mb-1">Amount:</label>
-      <input type="number" step="0.01" id="edit-amount" name="amount"
-             class="form-control form-control-sm" required>
-    </div>
-    <div class="mb-3">
-      <label for="edit-note" class="form-label mb-1">Note:</label>
-      <input type="text" id="edit-note" name="note" class="form-control form-control-sm">
-    </div>
-
-    <div class="text-end mt-3">
-      <button type="submit" class="btn btn-primary btn-sm me-2">Save</button>
-      <button
-        type="submit"
-        name="delete_withholding"
-        value="1"
-        class="btn btn-danger btn-sm me-2"
-        onclick="return confirm('Delete this transaction?');"
-      >Delete</button>
-      <button type="button" class="btn btn-secondary btn-sm" onclick="closeWithholdingModal()">Cancel</button>
-    </div>
-  </form>
-</div>
-
-<script>
-  const backdrop = document.getElementById('modalBackdrop');
-  const modal = document.getElementById('editWithholdingModal');
-  const form = document.getElementById('edit-withholding-form');
-
-  function openWithholdingModal(txId, dateStr, amount, note) {
-    const url = "{% url 'update_withholding_transaction' 0 %}".replace("/0/", "/" + txId + "/");
-    form.action = url;
-
-    document.getElementById('edit-date').value = dateStr;
-    document.getElementById('edit-amount').value = amount;
-    document.getElementById('edit-note').value = note || "";
-
-    backdrop.style.display = 'block';
-    modal.style.display = 'block';
-  }
-
-  function closeWithholdingModal() {
-    backdrop.style.display = 'none';
-    modal.style.display = 'none';
-  }
-
-  document.querySelectorAll('.btn-link[data-tx-id]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const txId = btn.dataset.txId;
-      const dateStr = btn.dataset.txDate;
-      const amount = btn.dataset.txAmount;
-      const note = btn.dataset.txNote;
-      openWithholdingModal(txId, dateStr, amount, note);
-    });
-  });
-
-  backdrop.addEventListener('click', () => {
-    closeWithholdingModal();
-  });
-
-  document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') {
-      closeWithholdingModal();
-    }
-  });
-</script>
 {% endblock %}

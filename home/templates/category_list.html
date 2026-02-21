@@ -1,248 +1,572 @@
 {% extends 'base.html' %}
+{% load humanize %}
 
 {% block content %}
+<style>
+  .category-card {
+    border: none;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    transition: all 0.3s ease;
+  }
+
+  .category-card:hover {
+    box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  }
+
+  .nav-pills .nav-link {
+    border-radius: 8px;
+    padding: 12px 24px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+  }
+
+  .nav-pills .nav-link:not(.active) {
+    color: #6c757d;
+    background-color: #f8f9fa;
+  }
+
+  .nav-pills .nav-link:not(.active):hover {
+    background-color: #e9ecef;
+    color: #495057;
+  }
+
+  .category-table {
+    margin-bottom: 0;
+  }
+
+  .category-table thead th {
+    background-color: #f8f9fa;
+    border-bottom: 2px solid #dee2e6;
+    font-weight: 600;
+    color: #495057;
+    text-transform: uppercase;
+    font-size: 0.85rem;
+    letter-spacing: 0.5px;
+  }
+
+  .category-table tbody tr {
+    transition: background-color 0.2s ease;
+  }
+
+  .category-table tbody tr:hover {
+    background-color: #f8f9fa;
+  }
+
+  .add-category-form {
+    background: #f8f9fa;
+    border: 2px solid #e9ecef;
+    padding: 20px;
+    border-radius: 12px;
+    margin-bottom: 24px;
+  }
+
+  .add-category-form h5 {
+    color: #495057;
+    font-weight: 600;
+  }
+
+  .add-category-form label {
+    color: #495057;
+    font-weight: 500;
+    font-size: 0.9rem;
+  }
+
+  .add-category-form .form-control,
+  .add-category-form .form-select {
+    background-color: white;
+    border: 1px solid #ced4da;
+    border-radius: 6px;
+  }
+
+  .add-category-form .btn-success {
+    background: #198754;
+    color: white;
+    border: none;
+    font-weight: 600;
+    padding: 12px;
+    border-radius: 8px;
+    transition: all 0.2s ease;
+  }
+
+  .add-category-form .btn-success:hover {
+    background: #157347;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  }
+
+  .action-buttons .btn {
+    border-radius: 6px;
+    padding: 6px 16px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+  }
+
+  .action-buttons .btn:hover {
+    transform: translateY(-1px);
+  }
+
+  .badge-account {
+    background-color: #e7f3ff;
+    color: #0066cc;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-weight: 500;
+    font-size: 0.85rem;
+  }
+
+  .stat-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 8px;
+    font-weight: 500;
+    font-size: 0.9rem;
+  }
+
+  .stat-badge.expense {
+    background-color: #fee;
+    color: #c33;
+  }
+
+  .stat-badge.income {
+    background-color: #efe;
+    color: #3c3;
+  }
+
+  .stat-badge.withholding {
+    background-color: #fef3cd;
+    color: #996600;
+  }
+</style>
+
 <div class="container mt-4">
-  <h2>Manage Categories</h2>
-  <p class="text-muted mb-4">Manage expense and income categories side by side.</p>
-
-  <!-- ==========================
-       EXPENSE EDIT MODAL
-  =========================== -->
-  <div id="editExpenseCategoryModal" style="
-    display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
-    background:white; padding:20px; border-radius:8px; box-shadow:0 4px 10px rgba(0,0,0,0.3);
-    z-index:1000; width:520px; max-width:90%;
-  ">
-    <h4 class="mb-3">Edit Expense Category</h4>
-    <form method="post" id="edit-expense-form">
-      {% csrf_token %}
-      <input type="hidden" name="action" value="expense_save">
-      <input type="hidden" name="id" id="edit-expense-id">
-
-      <div class="mb-3">
-        <label class="form-label">Name:</label>
-        <input type="text" class="form-control" name="name" id="edit-expense-name" required>
-      </div>
-
-      <div class="mb-3">
-        <label class="form-label">Monthly Limit:</label>
-        <input type="number" step="0.01" class="form-control" name="monthly_limit" id="edit-expense-monthly-limit" required>
-      </div>
-
-      <div class="mb-3">
-        <label class="form-label">Savings per Paycheque:</label>
-        <input type="number" step="0.01" class="form-control" name="savings_target_per_paycheque" id="edit-expense-savings">
-      </div>
-
-      <div class="text-end mt-3">
-        <button type="submit" class="btn btn-primary me-2">Save</button>
-        <button type="button" class="btn btn-secondary" onclick="closeExpenseModal()">Cancel</button>
-      </div>
-    </form>
+  <div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+      <h2 class="mb-1">📂 Manage Categories</h2>
+      <p class="text-muted mb-0">Organize your expenses, income, and withholding buckets</p>
+    </div>
   </div>
 
-  <!-- ==========================
-       INCOME EDIT MODAL
-  =========================== -->
-  <div id="editIncomeCategoryModal" style="
-    display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
-    background:white; padding:20px; border-radius:8px; box-shadow:0 4px 10px rgba(0,0,0,0.3);
-    z-index:1000; width:520px; max-width:90%;
-  ">
-    <h4 class="mb-3">Edit Income Category</h4>
-    <form method="post" id="edit-income-form">
-      {% csrf_token %}
-      <input type="hidden" name="action" value="income_save">
-      <input type="hidden" name="id" id="edit-income-id">
+  {% if messages %}
+    <div class="messages mb-3">
+      {% for message in messages %}
+        <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
+          {{ message }}
+          <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
 
-      <div class="mb-3">
-        <label class="form-label">Name:</label>
-        <input type="text" class="form-control" name="name" id="edit-income-name" required>
-      </div>
+  <!-- Navigation Tabs -->
+  <ul class="nav nav-pills mb-4" id="categoryTabs" role="tablist">
+    <li class="nav-item" role="presentation">
+      <button class="nav-link active" id="expense-tab" data-bs-toggle="pill"
+              data-bs-target="#expense-pane" type="button" role="tab">
+        <span class="stat-badge expense">💰 Expense Categories ({{ expense_categories|length }})</span>
+      </button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="income-tab" data-bs-toggle="pill"
+              data-bs-target="#income-pane" type="button" role="tab">
+        <span class="stat-badge income">💵 Income Categories ({{ income_categories|length }})</span>
+      </button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="withholding-tab" data-bs-toggle="pill"
+              data-bs-target="#withholding-pane" type="button" role="tab">
+        <span class="stat-badge withholding">🏦 Withholding Buckets ({{ withholding_categories|length }})</span>
+      </button>
+    </li>
+  </ul>
 
-      <div class="mb-3">
-        <label class="form-label">Monthly Target:</label>
-        <input type="number" step="0.01" class="form-control" name="monthly_target" id="edit-income-monthly-target">
-      </div>
+  <!-- Tab Content -->
+  <div class="tab-content" id="categoryTabsContent">
 
-      <div class="form-check mb-3">
-        <input class="form-check-input" type="checkbox" name="taxable_default" id="edit-income-taxable-default">
-        <label class="form-check-label" for="edit-income-taxable-default">
-          Taxable by default
-        </label>
-      </div>
-
-      <div class="text-end mt-3">
-        <button type="submit" class="btn btn-primary me-2">Save</button>
-        <button type="button" class="btn btn-secondary" onclick="closeIncomeModal()">Cancel</button>
-      </div>
-    </form>
-  </div>
-
-  <!-- BACKDROP (shared) -->
-  <div id="categoryModalBackdrop" style="
-    display:none; position:fixed; top:0; left:0; width:100%; height:100%;
-    background-color:rgba(0,0,0,0.5); z-index:999;
-  "></div>
-
-  <div class="row g-4">
-    <!-- ==========================
-         LEFT: EXPENSE CATEGORIES
-    =========================== -->
-    <div class="col-lg-6">
-      <div class="card shadow-sm">
+    <!-- ==================== EXPENSE CATEGORIES ==================== -->
+    <div class="tab-pane fade show active" id="expense-pane" role="tabpanel">
+      <div class="category-card card">
         <div class="card-body">
-          <h4 class="card-title mb-3">Expense Categories</h4>
-
           <!-- Add Expense Category -->
-          <form method="post" class="mb-3">
-            {% csrf_token %}
-            <input type="hidden" name="action" value="expense_save">
-            <input type="hidden" name="id" value="">
-            <div class="row g-2">
-              <div class="col-md-4">
-                {{ expense_form.name.label_tag }} {{ expense_form.name }}
+          <div class="add-category-form">
+            <h5 class="mb-3">➕ Add New Expense Category</h5>
+            <form method="post">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="expense_save">
+              <input type="hidden" name="id" value="">
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <label class="form-label">Category Name</label>
+                  {{ expense_form.name }}
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label">Monthly Limit</label>
+                  {{ expense_form.monthly_limit }}
+                </div>
+                <div class="col-12">
+                  <button type="submit" class="btn btn-success w-100">Add Expense Category</button>
+                </div>
               </div>
-              <div class="col-md-4">
-                {{ expense_form.monthly_limit.label_tag }} {{ expense_form.monthly_limit }}
-              </div>
-              <div class="col-md-4">
-                {{ expense_form.savings_target_per_paycheque.label_tag }} {{ expense_form.savings_target_per_paycheque }}
-              </div>
-              <div class="col-12">
-                <button type="submit" class="btn btn-success w-100">Add Expense Category</button>
-              </div>
-            </div>
-          </form>
+            </form>
+          </div>
 
+          <!-- Expense Categories Table -->
           <div class="table-responsive">
-            <table class="table table-bordered align-middle mb-0">
+            <table class="table category-table table-hover align-middle">
               <thead>
                 <tr>
-                  <th>Name</th>
+                  <th>Category Name</th>
                   <th>Monthly Limit</th>
-                  <th>Savings/Paycheque</th>
-                  <th style="width:160px;">Actions</th>
+                  <th style="width:180px;">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {% for cat in expense_categories %}
                 <tr>
-                  <td>{{ cat.name }}</td>
-                  <td>${{ cat.monthly_limit|floatformat:2 }}</td>
-                  <td>${{ cat.savings_target_per_paycheque|default_if_none:"0.00" }}</td>
-                  <td>
-                    <button
-                      type="button"
-                      class="btn btn-sm btn-primary"
-                      onclick="openExpenseModal('{{ cat.id }}', '{{ cat.name|escapejs }}', '{{ cat.monthly_limit }}', '{{ cat.savings_target_per_paycheque|default_if_none:"" }}')"
-                    >
+                  <td><strong>{{ cat.name }}</strong></td>
+                  <td>${{ cat.monthly_limit|floatformat:2|intcomma }}</td>
+                  <td class="action-buttons">
+                    <button type="button" class="btn btn-sm btn-primary"
+                            onclick="openExpenseModal('{{ cat.id }}', '{{ cat.name|escapejs }}', '{{ cat.monthly_limit }}')">
                       Edit
                     </button>
-
                     <form method="post" style="display:inline;">
                       {% csrf_token %}
                       <input type="hidden" name="action" value="expense_delete">
                       <input type="hidden" name="id" value="{{ cat.id }}">
-                      <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+                      <button type="submit" class="btn btn-sm btn-danger"
+                              onclick="return confirm('Delete {{ cat.name }}?');">Delete</button>
                     </form>
                   </td>
                 </tr>
                 {% empty %}
-                <tr><td colspan="4" class="text-muted">No expense categories yet.</td></tr>
+                <tr>
+                  <td colspan="4" class="text-center text-muted py-4">
+                    No expense categories yet. Add one above to get started! 🚀
+                  </td>
+                </tr>
                 {% endfor %}
               </tbody>
             </table>
           </div>
-
         </div>
       </div>
     </div>
 
-    <!-- ==========================
-         RIGHT: INCOME CATEGORIES
-    =========================== -->
-    <div class="col-lg-6">
-      <div class="card shadow-sm">
+    <!-- ==================== INCOME CATEGORIES ==================== -->
+    <div class="tab-pane fade" id="income-pane" role="tabpanel">
+      <div class="category-card card">
         <div class="card-body">
-          <h4 class="card-title mb-3">Income Categories</h4>
-
           <!-- Add Income Category -->
-          <form method="post" class="mb-3">
-            {% csrf_token %}
-            <input type="hidden" name="action" value="income_save">
-            <input type="hidden" name="id" value="">
-            <div class="row g-2">
-              <div class="col-md-5">
-                {{ income_form.name.label_tag }} {{ income_form.name }}
-              </div>
-              <div class="col-md-4">
-                {{ income_form.monthly_target.label_tag }} {{ income_form.monthly_target }}
-              </div>
-              <div class="col-md-3 d-flex align-items-end">
-                <div class="form-check">
-                  {{ income_form.taxable_default }}
-                  <label class="form-check-label ms-1" for="{{ income_form.taxable_default.id_for_label }}">
-                    Taxable
-                  </label>
+          <div class="add-category-form">
+            <h5 class="mb-3">➕ Add New Income Category</h5>
+            <form method="post">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="income_save">
+              <input type="hidden" name="id" value="">
+              <div class="row g-3">
+                <div class="col-md-5">
+                  <label class="form-label">Category Name</label>
+                  {{ income_form.name }}
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label">Monthly Target</label>
+                  {{ income_form.monthly_target }}
+                </div>
+                <div class="col-md-3 d-flex align-items-end">
+                  <div class="form-check">
+                    {{ income_form.taxable_default }}
+                    <label class="form-check-label ms-1" for="{{ income_form.taxable_default.id_for_label }}">
+                      Taxable by Default
+                    </label>
+                  </div>
+                </div>
+                <div class="col-12">
+                  <button type="submit" class="btn btn-success w-100">Add Income Category</button>
                 </div>
               </div>
-              <div class="col-12">
-                <button type="submit" class="btn btn-success w-100">Add Income Category</button>
-              </div>
-            </div>
-          </form>
+            </form>
+          </div>
 
+          <!-- Income Categories Table -->
           <div class="table-responsive">
-            <table class="table table-bordered align-middle mb-0">
+            <table class="table category-table table-hover align-middle">
               <thead>
                 <tr>
-                  <th>Name</th>
+                  <th>Category Name</th>
                   <th>Monthly Target</th>
                   <th>Taxable Default</th>
-                  <th style="width:160px;">Actions</th>
+                  <th style="width:180px;">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {% for inc in income_categories %}
                 <tr>
-                  <td>{{ inc.name }}</td>
+                  <td><strong>{{ inc.name }}</strong></td>
                   <td>
                     {% if inc.monthly_target %}
-                      ${{ inc.monthly_target|floatformat:2 }}
+                      ${{ inc.monthly_target|floatformat:2|intcomma }}
                     {% else %}
                       <span class="text-muted">—</span>
                     {% endif %}
                   </td>
-                  <td>{{ inc.taxable_default|yesno:"Yes,No" }}</td>
                   <td>
-                    <button
-                      type="button"
-                      class="btn btn-sm btn-primary"
-                      onclick="openIncomeModal('{{ inc.id }}', '{{ inc.name|escapejs }}', '{{ inc.monthly_target|default_if_none:"" }}', '{{ inc.taxable_default|yesno:"1,0" }}')"
-                    >
+                    {% if inc.taxable_default %}
+                      <span class="badge bg-warning text-dark">Yes</span>
+                    {% else %}
+                      <span class="badge bg-secondary">No</span>
+                    {% endif %}
+                  </td>
+                  <td class="action-buttons">
+                    <button type="button" class="btn btn-sm btn-primary"
+                            onclick="openIncomeModal('{{ inc.id }}', '{{ inc.name|escapejs }}', '{{ inc.monthly_target|default_if_none:"" }}', '{{ inc.taxable_default|yesno:"1,0" }}')">
                       Edit
                     </button>
-
                     <form method="post" style="display:inline;">
                       {% csrf_token %}
                       <input type="hidden" name="action" value="income_delete">
                       <input type="hidden" name="id" value="{{ inc.id }}">
-                      <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+                      <button type="submit" class="btn btn-sm btn-danger"
+                              onclick="return confirm('Delete {{ inc.name }}?');">Delete</button>
                     </form>
                   </td>
                 </tr>
                 {% empty %}
-                <tr><td colspan="4" class="text-muted">No income categories yet.</td></tr>
+                <tr>
+                  <td colspan="4" class="text-center text-muted py-4">
+                    No income categories yet. Add one above to get started! 🚀
+                  </td>
+                </tr>
                 {% endfor %}
               </tbody>
             </table>
           </div>
-
         </div>
       </div>
     </div>
+
+    <!-- ==================== WITHHOLDING CATEGORIES ==================== -->
+    <div class="tab-pane fade" id="withholding-pane" role="tabpanel">
+      <div class="category-card card">
+        <div class="card-body">
+          <!-- Add Withholding Category -->
+          <div class="add-category-form">
+            <h5 class="mb-3">➕ Add New Withholding Bucket</h5>
+            <form method="post">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="withholding_save">
+              <input type="hidden" name="id" value="">
+              <div class="row g-3">
+                <div class="col-md-4">
+                  <label class="form-label">Bucket Name</label>
+                  {{ withholding_form.name }}
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label">Withholding Account</label>
+                  {{ withholding_form.account }}
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label">Monthly Target</label>
+                  {{ withholding_form.monthly_target }}
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label">Target Amount (Goal)</label>
+                  {{ withholding_form.target_amount }}
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label">Next Due Date</label>
+                  {{ withholding_form.next_due_date }}
+                </div>
+                <div class="col-12">
+                  <button type="submit" class="btn btn-success w-100">Add Withholding Bucket</button>
+                </div>
+              </div>
+            </form>
+          </div>
+
+          <!-- Withholding Categories Table -->
+          <div class="table-responsive">
+            <table class="table category-table table-hover align-middle">
+              <thead>
+                <tr>
+                  <th>Bucket Name</th>
+                  <th>Account</th>
+                  <th>Monthly Target</th>
+                  <th>Target Amount</th>
+                  <th>Next Due Date</th>
+                  <th style="width:180px;">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for wh in withholding_categories %}
+                <tr>
+                  <td><strong>{{ wh.name }}</strong></td>
+                  <td><span class="badge-account">{{ wh.account.name }}</span></td>
+                  <td>
+                    {% if wh.monthly_target %}
+                      ${{ wh.monthly_target|floatformat:2|intcomma }}
+                    {% else %}
+                      <span class="text-muted">—</span>
+                    {% endif %}
+                  </td>
+                  <td>${{ wh.target_amount|floatformat:2|intcomma }}</td>
+                  <td>
+                    {% if wh.next_due_date %}
+                      {{ wh.next_due_date|date:"M d, Y" }}
+                    {% else %}
+                      <span class="text-muted">—</span>
+                    {% endif %}
+                  </td>
+                  <td class="action-buttons">
+                    <button type="button" class="btn btn-sm btn-primary"
+                            onclick="openWithholdingModal('{{ wh.id }}', '{{ wh.name|escapejs }}', '{{ wh.account.id }}', '{{ wh.monthly_target|default_if_none:"" }}', '{{ wh.target_amount }}', '{% if wh.next_due_date %}{{ wh.next_due_date|date:"Y-m-d" }}{% endif %}')">
+                      Edit
+                    </button>
+                    <form method="post" style="display:inline;">
+                      {% csrf_token %}
+                      <input type="hidden" name="action" value="withholding_delete">
+                      <input type="hidden" name="id" value="{{ wh.id }}">
+                      <button type="submit" class="btn btn-sm btn-danger"
+                              onclick="return confirm('Delete {{ wh.name }}?');">Delete</button>
+                    </form>
+                  </td>
+                </tr>
+                {% empty %}
+                <tr>
+                  <td colspan="6" class="text-center text-muted py-4">
+                    No withholding buckets yet. Add one above to get started! 🚀
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
   </div>
+</div>
+
+<!-- BACKDROP (shared) -->
+<div id="categoryModalBackdrop" style="
+  display:none; position:fixed; top:0; left:0; width:100%; height:100%;
+  background-color:rgba(0,0,0,0.5); z-index:999;
+"></div>
+
+<!-- ==================== EXPENSE EDIT MODAL ==================== -->
+<div id="editExpenseCategoryModal" style="
+  display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
+  background:white; padding:24px; border-radius:12px; box-shadow:0 8px 32px rgba(0,0,0,0.3);
+  z-index:1000; width:520px; max-width:90%;
+">
+  <h4 class="mb-3">✏️ Edit Expense Category</h4>
+  <form method="post" id="edit-expense-form">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="expense_save">
+    <input type="hidden" name="id" id="edit-expense-id">
+
+    <div class="mb-3">
+      <label class="form-label">Name:</label>
+      <input type="text" class="form-control" name="name" id="edit-expense-name" required>
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label">Monthly Limit:</label>
+      <input type="number" step="0.01" class="form-control" name="monthly_limit" id="edit-expense-monthly-limit" required>
+    </div>
+
+    <div class="text-end mt-3">
+      <button type="submit" class="btn btn-primary me-2">Save Changes</button>
+      <button type="button" class="btn btn-secondary" onclick="closeExpenseModal()">Cancel</button>
+    </div>
+  </form>
+</div>
+
+<!-- ==================== INCOME EDIT MODAL ==================== -->
+<div id="editIncomeCategoryModal" style="
+  display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
+  background:white; padding:24px; border-radius:12px; box-shadow:0 8px 32px rgba(0,0,0,0.3);
+  z-index:1000; width:520px; max-width:90%;
+">
+  <h4 class="mb-3">✏️ Edit Income Category</h4>
+  <form method="post" id="edit-income-form">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="income_save">
+    <input type="hidden" name="id" id="edit-income-id">
+
+    <div class="mb-3">
+      <label class="form-label">Name:</label>
+      <input type="text" class="form-control" name="name" id="edit-income-name" required>
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label">Monthly Target:</label>
+      <input type="number" step="0.01" class="form-control" name="monthly_target" id="edit-income-monthly-target">
+    </div>
+
+    <div class="form-check mb-3">
+      <input class="form-check-input" type="checkbox" name="taxable_default" id="edit-income-taxable-default">
+      <label class="form-check-label" for="edit-income-taxable-default">
+        Taxable by default
+      </label>
+    </div>
+
+    <div class="text-end mt-3">
+      <button type="submit" class="btn btn-primary me-2">Save Changes</button>
+      <button type="button" class="btn btn-secondary" onclick="closeIncomeModal()">Cancel</button>
+    </div>
+  </form>
+</div>
+
+<!-- ==================== WITHHOLDING EDIT MODAL ==================== -->
+<div id="editWithholdingCategoryModal" style="
+  display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
+  background:white; padding:24px; border-radius:12px; box-shadow:0 8px 32px rgba(0,0,0,0.3);
+  z-index:1000; width:600px; max-width:90%;
+">
+  <h4 class="mb-3">✏️ Edit Withholding Bucket</h4>
+  <form method="post" id="edit-withholding-form">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="withholding_save">
+    <input type="hidden" name="id" id="edit-withholding-id">
+
+    <div class="row">
+      <div class="col-md-6 mb-3">
+        <label class="form-label">Name:</label>
+        <input type="text" class="form-control" name="name" id="edit-withholding-name" required>
+      </div>
+
+      <div class="col-md-6 mb-3">
+        <label class="form-label">Withholding Account:</label>
+        <select class="form-select" name="account" id="edit-withholding-account" required>
+          {{ withholding_form.account }}
+        </select>
+      </div>
+
+      <div class="col-md-6 mb-3">
+        <label class="form-label">Monthly Target:</label>
+        <input type="number" step="0.01" class="form-control" name="monthly_target" id="edit-withholding-monthly-target">
+      </div>
+
+      <div class="col-md-6 mb-3">
+        <label class="form-label">Target Amount:</label>
+        <input type="number" step="0.01" class="form-control" name="target_amount" id="edit-withholding-target-amount" required>
+      </div>
+
+      <div class="col-12 mb-3">
+        <label class="form-label">Next Due Date:</label>
+        <input type="date" class="form-control" name="next_due_date" id="edit-withholding-due-date">
+      </div>
+    </div>
+
+    <div class="text-end mt-3">
+      <button type="submit" class="btn btn-primary me-2">Save Changes</button>
+      <button type="button" class="btn btn-secondary" onclick="closeWithholdingModal()">Cancel</button>
+    </div>
+  </form>
 </div>
 
 <script>
@@ -254,11 +578,10 @@
   }
 
   // -------- Expense modal --------
-  function openExpenseModal(id, name, limit, savings) {
+  function openExpenseModal(id, name, limit) {
     document.getElementById("edit-expense-id").value = id;
     document.getElementById("edit-expense-name").value = name;
     document.getElementById("edit-expense-monthly-limit").value = limit;
-    document.getElementById("edit-expense-savings").value = savings;
 
     document.getElementById("editExpenseCategoryModal").style.display = "block";
     showBackdrop();
@@ -274,8 +597,6 @@
     document.getElementById("edit-income-id").value = id;
     document.getElementById("edit-income-name").value = name;
     document.getElementById("edit-income-monthly-target").value = target;
-
-    // taxableFlag passed as "1" or "0"
     document.getElementById("edit-income-taxable-default").checked = (taxableFlag === "1");
 
     document.getElementById("editIncomeCategoryModal").style.display = "block";
@@ -287,16 +608,37 @@
     hideBackdrop();
   }
 
-  // Backdrop click closes whichever modal is open
+  // -------- Withholding modal --------
+  function openWithholdingModal(id, name, accountId, monthlyTarget, targetAmount, dueDate) {
+    document.getElementById("edit-withholding-id").value = id;
+    document.getElementById("edit-withholding-name").value = name;
+    document.getElementById("edit-withholding-account").value = accountId;
+    document.getElementById("edit-withholding-monthly-target").value = monthlyTarget;
+    document.getElementById("edit-withholding-target-amount").value = targetAmount;
+    document.getElementById("edit-withholding-due-date").value = dueDate;
+
+    document.getElementById("editWithholdingCategoryModal").style.display = "block";
+    showBackdrop();
+  }
+
+  function closeWithholdingModal() {
+    document.getElementById("editWithholdingCategoryModal").style.display = "none";
+    hideBackdrop();
+  }
+
+  // Backdrop click closes all modals
   document.getElementById("categoryModalBackdrop").addEventListener("click", function() {
     closeExpenseModal();
     closeIncomeModal();
+    closeWithholdingModal();
   });
 
+  // ESC key closes all modals
   document.addEventListener("keydown", function(event) {
     if (event.key === "Escape") {
       closeExpenseModal();
       closeIncomeModal();
+      closeWithholdingModal();
     }
   });
 </script>

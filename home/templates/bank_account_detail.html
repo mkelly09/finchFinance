@@ -1,0 +1,202 @@
+{% extends 'base.html' %}
+{% load humanize %}
+
+{% block content %}
+<div class="container mt-4">
+  <!-- Breadcrumb -->
+  <nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb finch-breadcrumb">
+      <li class="breadcrumb-item finch-breadcrumb-item"><a href="{% url 'bank_accounts' %}">Accounts</a></li>
+      <li class="breadcrumb-item finch-breadcrumb-item active" aria-current="page">{{ account.name }}</li>
+    </ol>
+  </nav>
+
+  <h1 class="finch-page-header">📊 {{ account.name }} Ledger</h1>
+  <p class="finch-page-subtitle">
+    {{ account.institution }}{% if account.account_number_last4 %} · •••• {{ account.account_number_last4 }}{% endif %}
+  </p>
+
+  <!-- Account Info Card -->
+  <div class="finch-card mb-4">
+    <div class="finch-card-header gradient-cyan">
+      <h4 class="mb-0">💳 Account Information</h4>
+    </div>
+    <div class="row">
+      <div class="col-md-6">
+        <div class="mb-2">
+          <span class="text-muted">Account Type:</span>
+          <strong class="ms-2">{{ account.get_account_type_display }}</strong>
+        </div>
+        <div class="mb-2">
+          <span class="text-muted">Institution:</span>
+          <strong class="ms-2">{{ account.institution }}</strong>
+        </div>
+      </div>
+      <div class="col-md-6">
+        <div class="mb-2">
+          <span class="text-muted">Current Balance:</span>
+          <strong class="ms-2 amount-net">
+            {% if account.current_balance %}
+              ${{ account.current_balance|floatformat:2|intcomma }}
+            {% else %}
+              $0.00
+            {% endif %}
+          </strong>
+        </div>
+        {% if account.last_updated %}
+        <div class="mb-2">
+          <span class="text-muted">Last Updated:</span>
+          <strong class="ms-2">{{ account.last_updated }}</strong>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Month Selector -->
+  <div class="finch-card mb-4">
+    <form method="get" class="row g-3 align-items-end">
+      <div class="col-md-8">
+        <label for="month" class="finch-form-label">📅 Select Month</label>
+        <input type="month" name="month" id="month" class="form-control" value="{{ selected_month }}">
+      </div>
+      <div class="col-md-4">
+        <button type="submit" class="btn btn-primary finch-btn w-100">View Ledger</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Summary Cards -->
+  <div class="row g-3 mb-4">
+    <div class="col-md-4">
+      <div class="finch-summary-card">
+        <div class="finch-summary-icon">📅</div>
+        <div class="finch-summary-label">Period</div>
+        <div class="finch-summary-value" style="font-size: 1.5rem; color: #495057;">
+          {{ selected_month_display }}
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="finch-summary-card border-start-green">
+        <div class="finch-summary-icon">💰</div>
+        <div class="finch-summary-label">Total Inflow</div>
+        <div class="finch-summary-value amount-income">
+          +${{ total_inflow|floatformat:2|intcomma }}
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="finch-summary-card border-start-red">
+        <div class="finch-summary-icon">💸</div>
+        <div class="finch-summary-label">Total Outflow</div>
+        <div class="finch-summary-value amount-expense">
+          −${{ total_outflow|floatformat:2|intcomma }}
+        </div>
+        <div class="mt-2 pt-2 border-top">
+          <small class="text-muted d-block mb-1">Net Change:</small>
+          {% if net_change >= 0 %}
+            <span class="amount-income" style="font-size: 1.25rem;">
+              +${{ net_change|floatformat:2|intcomma }}
+            </span>
+          {% else %}
+            <span class="amount-expense" style="font-size: 1.25rem;">
+              −${{ net_change|floatformat:2|intcomma|cut:"-" }}
+            </span>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Ledger table -->
+  <div class="finch-card">
+    <div class="finch-card-header gradient-purple">
+      <h4 class="mb-0">📝 Transactions for {{ selected_month_display }}</h4>
+    </div>
+
+      {% if entries %}
+        <div class="table-responsive">
+          <table class="table finch-table table-hover align-middle">
+            <thead>
+              <tr>
+                <th style="width: 130px;">Date</th>
+                <th style="width: 80px;">Type</th>
+                <th>Description</th>
+                <th style="width: 140px;" class="text-end">Amount</th>
+                <th style="width: 220px;">Notes</th>
+                <th style="width: 80px;">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for e in entries %}
+                <tr>
+                  <td>{{ e.date }}</td>
+                  <td>
+                    {% if e.kind == "income" %}
+                      <span class="badge bg-success-subtle text-success border border-success-subtle">Income</span>
+                    {% elif e.kind == "expense" %}
+                      <span class="badge bg-danger-subtle text-danger border border-danger-subtle">Expense</span>
+                    {% elif e.kind == "transfer" %}
+                      {% if e.is_inflow %}
+                        <span class="badge bg-info-subtle text-info border border-info-subtle">Transfer in</span>
+                      {% else %}
+                        <span class="badge bg-warning-subtle text-warning border border-warning-subtle">Transfer out</span>
+                      {% endif %}
+                    {% else %}
+                      {{ e.kind|title }}
+                    {% endif %}
+                  </td>
+                  <td>{{ e.description }}</td>
+                  <td class="text-end">
+                    {% if e.signed_amount >= 0 %}
+                      <span class="amount-income">+${{ e.signed_amount|floatformat:2|intcomma }}</span>
+                    {% else %}
+                      <span class="amount-expense">−${{ e.signed_amount|floatformat:2|intcomma|cut:"-" }}</span>
+                    {% endif %}
+                  </td>
+                  <td>{{ e.notes }}</td>
+                  <td class="text-center">
+                    {% if e.income_id %}
+                      <a href="{% url 'income_edit' e.income_id %}"
+                         class="btn btn-sm btn-outline-primary finch-btn-sm"
+                         title="Edit income">
+                        ✏️
+                      </a>
+                    {% elif e.expense_id %}
+                      <a href="{% url 'expense_edit' e.expense_id %}"
+                         class="btn btn-sm btn-outline-primary finch-btn-sm"
+                         title="Edit expense">
+                        ✏️
+                      </a>
+                    {% elif e.transfer_id %}
+                      <a href="{% url 'transfer_edit' e.transfer_id %}"
+                         class="btn btn-sm btn-outline-primary finch-btn-sm"
+                         title="Edit transfer">
+                        ✏️
+                      </a>
+                    {% else %}
+                      <span class="text-muted small">—</span>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="finch-empty-state">
+          <div class="finch-empty-icon">📭</div>
+          <h3>No Transactions</h3>
+          <p>No transactions recorded for this account in {{ selected_month_display }}.</p>
+        </div>
+      {% endif %}
+  </div>
+
+  <div class="mt-4">
+    <a href="{% url 'bank_accounts' %}" class="btn btn-outline-secondary finch-btn">
+      ← Back to Accounts Overview
+    </a>
+  </div>
+</div>
+{% endblock %}

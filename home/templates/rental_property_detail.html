@@ -3,49 +3,74 @@
 
 {% block content %}
 <div class="container mt-4">
-  <!-- Header: title + high-level income/expense/net + back buttons -->
-  <div class="row mb-3 align-items-end">
-    <div class="col-md-8">
-      <h2>{{ property.name }} — Owned Property Snapshot</h2>
-      <p class="text-muted mb-0">
-        Income: <strong>${{ range_income_total|floatformat:2|intcomma }}</strong>
-        &nbsp;•&nbsp;
-        Expenses: <strong>${{ range_expense_total|floatformat:2|intcomma }}</strong>
-        &nbsp;•&nbsp;
-        Net: <strong>${{ range_net_total|floatformat:2|intcomma }}</strong>
-      </p>
-      {% if property.equity %}
-        <p class="text-muted mb-0">
-          Equity (est.): <strong>${{ property.equity|floatformat:2|intcomma }}</strong>
-          {% if property.ltv_pct %}
-            · LTV: <strong>{{ property.ltv_pct|floatformat:1 }}%</strong>
-          {% endif %}
-        </p>
-      {% endif %}
+  <!-- Breadcrumb -->
+  <nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb finch-breadcrumb">
+      <li class="breadcrumb-item finch-breadcrumb-item"><a href="{% url 'rental_properties' %}?month={{ selected_month }}&range={{ selected_range }}">Owned Properties</a></li>
+      <li class="breadcrumb-item finch-breadcrumb-item active" aria-current="page">{{ property.name }}</li>
+    </ol>
+  </nav>
+
+  <h1 class="finch-page-header">🏠 {{ property.name }}</h1>
+  <p class="finch-page-subtitle">Complete financial snapshot for this owned property</p>
+
+  <!-- Summary Cards -->
+  <div class="row g-3 mb-4">
+    <div class="col-md-3">
+      <div class="finch-summary-card border-start-green">
+        <div class="finch-summary-icon">💰</div>
+        <div class="finch-summary-label">Total Income</div>
+        <div class="finch-summary-value amount-income">
+          ${{ range_income_total|floatformat:2|intcomma }}
+        </div>
+      </div>
     </div>
-    <div class="col-md-4 mt-3 mt-md-0 text-md-end">
-      <a class="btn btn-outline-secondary mb-1"
-         href="{% url 'rental_properties' %}?month={{ selected_month }}&range={{ selected_range }}">
-        ← Back to Owned Properties
-      </a>
-      <a class="btn btn-outline-secondary mb-1 ms-md-2"
-         href="{% url 'dashboard' %}?month={{ selected_month }}">
-        ← Back to Dashboard
-      </a>
+    <div class="col-md-3">
+      <div class="finch-summary-card border-start-red">
+        <div class="finch-summary-icon">💸</div>
+        <div class="finch-summary-label">Total Expenses</div>
+        <div class="finch-summary-value amount-expense">
+          ${{ range_expense_total|floatformat:2|intcomma }}
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="finch-summary-card border-start-purple">
+        <div class="finch-summary-icon">📊</div>
+        <div class="finch-summary-label">Net Amount</div>
+        <div class="finch-summary-value amount-net">
+          ${{ range_net_total|floatformat:2|intcomma }}
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="finch-summary-card">
+        <div class="finch-summary-icon">🏦</div>
+        <div class="finch-summary-label">Equity (Est.)</div>
+        <div class="finch-summary-value amount-net">
+          {% if property.equity %}
+            ${{ property.equity|floatformat:2|intcomma }}
+          {% else %}
+            —
+          {% endif %}
+        </div>
+        {% if property.ltv_pct %}
+        <div class="mt-1 text-muted small">
+          LTV: <strong>{{ property.ltv_pct|floatformat:1 }}%</strong>
+        </div>
+        {% endif %}
+      </div>
     </div>
   </div>
 
   <!-- Mortgage card -->
-  <div class="card shadow-sm mb-3">
-    <div class="card-body">
-      <div class="d-flex justify-content-between align-items-start mb-2">
-        <div>
-          <h5 class="card-title mb-1">Mortgage</h5>
-          <p class="text-muted small mb-0">
-            Balances are tracked from your mortgage principal / prepayment expense categories.
-          </p>
-        </div>
-      </div>
+  <div class="finch-card mb-4">
+    <div class="finch-card-header gradient-red">
+      <h5 class="mb-0">🏦 Mortgage Information</h5>
+    </div>
+      <p class="text-muted small mb-3">
+        Balances are tracked from your mortgage principal / prepayment expense categories.
+      </p>
 
       {% if mortgage_panels %}
         {% for panel in mortgage_panels %}
@@ -210,8 +235,8 @@
 
               {% if panel.ledger_rows %}
                 <div class="table-responsive mb-2">
-                  <table class="table table-sm table-striped align-middle mb-0">
-                    <thead class="table-light">
+                  <table class="table finch-table table-sm align-middle mb-0">
+                    <thead>
                       <tr>
                         <th style="width: 120px;">Date</th>
                         <th style="width: 140px;">Type</th>
@@ -269,8 +294,8 @@
                 <hr class="my-2">
                 <h6 class="mb-2">Projected payments (rest of {{ selected_month|slice:":4" }})</h6>
                 <div class="table-responsive mb-3">
-                  <table class="table table-sm table-striped align-middle mb-0">
-                    <thead class="table-light">
+                  <table class="table finch-table table-sm align-middle mb-0">
+                    <thead>
                       <tr>
                         <th style="width: 120px;">Date</th>
                         <th style="width: 140px;">Type</th>
@@ -329,29 +354,29 @@
           <em>Property mortgages</em> or inline on the property record.
         </p>
       {% endif %}
-    </div>
   </div>
 
   <!-- Property value & equity card -->
-  <div class="card shadow-sm mb-3">
-    <div class="card-body">
-      <div class="d-flex justify-content-between align-items-start mb-1">
+  <div class="finch-card mb-4">
+    <div class="finch-card-header gradient-purple">
+      <div class="d-flex justify-content-between align-items-center">
         <div>
-          <h5 class="card-title mb-1">Property value &amp; equity</h5>
-          <p class="text-muted small mb-0">
-            Used for equity and LTV calculations. This does not affect any income/expense numbers.
-          </p>
+          <h5 class="mb-0">💎 Property Value &amp; Equity</h5>
         </div>
         <div>
           <button
             type="button"
-            class="btn btn-outline-primary btn-sm"
+            class="btn btn-light btn-sm finch-btn-sm"
             data-bs-toggle="modal"
             data-bs-target="#editValueModal">
-            Edit estimated value
+            ✏️ Edit Value
           </button>
         </div>
       </div>
+    </div>
+      <p class="text-muted small mb-3">
+        Used for equity and LTV calculations. This does not affect any income/expense numbers.
+      </p>
 
       <div class="row small mt-2">
         <div class="col-md-4 mb-1">
@@ -385,7 +410,6 @@
           {% endif %}
         </div>
       </div>
-    </div>
   </div>
 
   <!-- Cashflow card -->
@@ -394,16 +418,16 @@
   {{ trend_expenses|json_script:"rp-trend-expenses" }}
   {{ trend_net|json_script:"rp-trend-net" }}
 
-  <div class="card shadow-sm mb-3">
-    <div class="card-body">
-      <div class="d-flex flex-wrap justify-content-between align-items-end mb-2">
-        <div class="mb-2 mb-md-0">
-          <h5 class="card-title mb-0">Cashflow over time</h5>
-          <div class="text-muted">
+  <div class="finch-card mb-4">
+    <div class="finch-card-header gradient-green">
+      <div class="d-flex flex-wrap justify-content-between align-items-center">
+        <div>
+          <h5 class="mb-0">📈 Cashflow Over Time</h5>
+          <div class="mt-1">
             Net for range: <strong>${{ range_net_total|floatformat:2|intcomma }}</strong>
           </div>
         </div>
-        <div>
+        <div class="mt-2 mt-md-0">
           <form method="get" class="row g-1 align-items-end">
             <div class="col-auto">
               <label for="month" class="form-label mb-0 small">Anchor month</label>
@@ -418,13 +442,13 @@
               </select>
             </div>
             <div class="col-auto">
-              <button type="submit" class="btn btn-primary btn-sm mt-3 mt-md-0">Apply</button>
+              <button type="submit" class="btn btn-primary btn-sm finch-btn-sm mt-3 mt-md-0">📊 Apply</button>
             </div>
           </form>
         </div>
       </div>
-      <canvas id="rentalTrendChart" height="90"></canvas>
     </div>
+      <canvas id="rentalTrendChart" height="90"></canvas>
   </div>
 
   <!-- Edit value modal -->
@@ -696,8 +720,8 @@
         <h6 class="mb-2">Income</h6>
         {% if row.incomes %}
           <div class="table-responsive mb-3">
-            <table class="table table-sm table-striped align-middle mb-0">
-              <thead class="table-light">
+            <table class="table finch-table table-sm align-middle mb-0">
+              <thead>
                 <tr>
                   <th style="width: 120px;">Date</th>
                   <th style="width: 220px;">Source</th>
@@ -734,8 +758,8 @@
         <h6 class="mb-2">Expenses</h6>
         {% if row.expenses %}
           <div class="table-responsive">
-            <table class="table table-sm table-striped align-middle mb-0">
-              <thead class="table-light">
+            <table class="table finch-table table-sm align-middle mb-0">
+              <thead>
                 <tr>
                   <th style="width: 120px;">Date</th>
                   <th style="width: 220px;">Vendor</th>

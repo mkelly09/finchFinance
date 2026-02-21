@@ -3,19 +3,10 @@
 
 {% block content %}
 <div class="container mt-4" style="max-width: 980px;">
-  <div class="d-flex justify-content-between align-items-center mb-3">
-    <div>
-      <h2 class="mb-0">Edit Expense</h2>
-      <div class="text-muted small">
-        {{ expense.date|date:"Y-m-d" }} — {{ expense.vendor_name }} — ${{ expense.amount|floatformat:2|intcomma }}
-      </div>
-    </div>
-    <div class="d-flex gap-2">
-      <a class="btn btn-outline-secondary" href="{% url 'dashboard' %}?month={{ expense.date|date:"Y-m" }}">
-        ← Back to Dashboard
-      </a>
-    </div>
-  </div>
+  <h1 class="finch-page-header">✏️ Edit Expense</h1>
+  <p class="finch-page-subtitle">
+    {{ expense.date|date:"Y-m-d" }} — {{ expense.vendor_name }} — <span class="amount-expense">${{ expense.amount|floatformat:2|intcomma }}</span>
+  </p>
 
   {% if messages %}
     {% for message in messages %}
@@ -23,8 +14,10 @@
     {% endfor %}
   {% endif %}
 
-  <div class="card shadow-sm mb-3">
-    <div class="card-body">
+  <div class="finch-card mb-4">
+    <div class="finch-card-header gradient-red">
+      <h5 class="mb-0">📝 Expense Details</h5>
+    </div>
 
       {% if form.errors %}
         <div class="alert alert-danger">
@@ -47,52 +40,52 @@
 
         <div class="row g-3">
           <div class="col-md-3">
-            <label class="form-label">Date</label>
+            <label class="finch-form-label">Date</label>
             {{ form.date }}
           </div>
 
           <div class="col-md-5">
-            <label class="form-label">Vendor</label>
+            <label class="finch-form-label">Vendor</label>
             {{ form.vendor_name }}
           </div>
 
           <div class="col-md-4">
-            <label class="form-label">Category</label>
+            <label class="finch-form-label">Category</label>
             {{ form.category }}
           </div>
 
           <div class="col-md-3">
-            <label class="form-label">Amount</label>
+            <label class="finch-form-label">Amount</label>
             {{ form.amount }}
           </div>
 
           <div class="col-md-3">
-            <label class="form-label">Bank Account</label>
+            <label class="finch-form-label">Bank Account</label>
             {{ form.bank_account }}
           </div>
 
           <div class="col-md-3">
-            <label class="form-label">Rental Unit</label>
+            <label class="finch-form-label">Rental Unit</label>
             {{ form.rental_unit }}
           </div>
 
           <div class="col-md-3">
-            <label class="form-label">CRA Category</label>
+            <label class="finch-form-label">CRA Category</label>
             {{ form.cra_category }}
           </div>
 
           <div class="col-md-3">
-            <label class="form-label">Rental Business Use %</label>
+            <label class="finch-form-label">Rental Business Use %</label>
             {{ form.rental_business_use_pct }}
           </div>
 
           <div class="col-md-6">
-            <label class="form-label">Location</label>
+            <label class="finch-form-label">Location</label>
             {{ form.location }}
           </div>
 
           <div class="col-md-12">
-            <label class="form-label">Notes</label>
+            <label class="finch-form-label">Notes</label>
             {{ form.notes }}
           </div>
         </div>
@@ -112,15 +105,18 @@
         </div>
 
         <div class="d-flex gap-2">
-          <button class="btn btn-primary" type="submit">Save</button>
+          <button class="btn btn-primary finch-btn" type="submit">💾 Save Changes</button>
+          <a class="btn btn-outline-secondary finch-btn" href="{% url 'dashboard' %}?month={{ expense.date|date:"Y-m" }}">
+            ← Back to Dashboard
+          </a>
         </div>
       </form>
-    </div>
   </div>
 
-  <div class="card shadow-sm">
-    <div class="card-body">
-      <h5 class="mb-3">Attachments</h5>
+  <div class="finch-card">
+    <div class="finch-card-header gradient-cyan">
+      <h5 class="mb-0">📎 Attachments</h5>
+    </div>
 
       {% if attachments %}
         <div class="list-group">
@@ -149,9 +145,11 @@
           {% endfor %}
         </div>
       {% else %}
-        <div class="text-muted">No attachments yet.</div>
+        <div class="finch-empty-state py-4">
+          <div class="finch-empty-icon">📎</div>
+          <p class="mb-0">No attachments yet.</p>
+        </div>
       {% endif %}
-    </div>
   </div>
 
 </div>

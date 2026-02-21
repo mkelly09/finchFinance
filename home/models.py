@@ -135,7 +135,16 @@ class WithholdingCategory(models.Model):
     )
     name = models.CharField(max_length=100)
 
-    # Optional: where you're trying to get to
+    # Optional: how much you aim to contribute each month
+    monthly_target = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Desired monthly contribution into this bucket (e.g. 250.00 for insurance).",
+    )
+
+    # Optional: where you're trying to get to (overall balance)
     target_amount = models.DecimalField(
         max_digits=12,
         decimal_places=2,
@@ -168,6 +177,7 @@ class WithholdingCategory(models.Model):
         If negative, you’re over-funded.
         """
         return self.target_amount - self.balance
+
 
 
 class WithholdingTransaction(models.Model):
@@ -245,6 +255,7 @@ class Expense(models.Model):
     amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     location = models.CharField(max_length=100, default="Ottawa")
     notes = models.TextField(blank=True, default="")
+
     bank_account = models.ForeignKey(
         BankAccount,
         on_delete=models.SET_NULL,
@@ -252,13 +263,15 @@ class Expense(models.Model):
         blank=True,
         related_name="expenses",
     )
+
     import_batch = models.ForeignKey(
-        ImportBatch,
+        "ImportBatch",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name="expenses",
     )
+
     rental_unit = models.ForeignKey(
         "RentalUnit",
         on_delete=models.SET_NULL,
@@ -277,17 +290,32 @@ class Expense(models.Model):
         help_text="Optional: CRA rental expense classification for tax reporting.",
     )
 
+    # NEW: If this real-world expense is funded from a withholding bucket,
+    # we can tag it here. This will let us compute payouts from buckets
+    # without faking those payouts as separate WithholdingTransaction rows.
+    withholding_category = models.ForeignKey(
+        "WithholdingCategory",
+        on_delete=SET_NULL,
+        null=True,
+        blank=True,
+        related_name="expenses",
+        help_text="If this expense is funded from a withholding bucket, select it here.",
+    )
+
     rental_business_use_pct = models.DecimalField(
         max_digits=5,
         decimal_places=2,
         null=True,
         blank=True,
-        help_text="Optional: percent (0–100) of this expense that is attributable to rental use (useful for mixed-use properties like Foxview).",
+        help_text=(
+            "Optional: percent (0–100) of this expense that relates to rental use "
+            "(useful for mixed-use properties like Foxview)."
+        ),
     )
-
 
     def __str__(self):
         return f"{self.date} | {self.vendor_name} | {self.amount}"
+
 
 class ExpenseAttachment(models.Model):
     expense = models.ForeignKey(
@@ -304,6 +332,149 @@ class ExpenseAttachment(models.Model):
 
     def __str__(self):
         return self.original_name or f"Attachment {self.id} (Expense {self.expense_id})"
+
+class Transfer(models.Model):
+    """
+    A movement of money between two accounts.
+
+    Typical examples:
+      - Moving cash from chequing to a withholding/savings account
+      - Paying off a credit card from a chequing account
+      - Partner contributions into a joint account
+      - Internal reshuffling between your own accounts
+
+    CONVENTION:
+      - `amount` is always stored as a positive value.
+      - Direction is determined by `from_account` and `to_account`.
+    """
+
+    date = models.DateField(default=dt_date.today)
+
+    amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        help_text="Positive amount of the transfer.",
+    )
+
+    description = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        help_text="Optional short label (e.g. 'Jenna contribution', 'Move to Arnprior tax bucket').",
+    )
+
+    notes = models.TextField(
+        blank=True,
+        default="",
+        help_text="Optional longer notes about this transfer.",
+    )
+
+    from_account = models.ForeignKey(
+        "BankAccount",
+        on_delete=SET_NULL,
+        null=True,
+        blank=True,
+        related_name="outgoing_transfers",
+        help_text="Account the money is leaving. Leave blank if this is funding from an external source.",
+    )
+
+    to_account = models.ForeignKey(
+        "BankAccount",
+        on_delete=SET_NULL,
+        null=True,
+        blank=True,
+        related_name="incoming_transfers",
+        help_text="Account the money is going into. Leave blank if this is going out to an external destination.",
+    )
+
+    # Optional link to a withholding bucket, when this transfer represents
+    # a contribution INTO or payout FROM a specific bucket.
+    withholding_category = models.ForeignKey(
+        "WithholdingCategory",
+        on_delete=SET_NULL,
+        null=True,
+        blank=True,
+        related_name="transfers",
+        help_text="If this transfer is related to a withholding bucket, select it here.",
+    )
+
+    import_batch = models.ForeignKey(
+        "ImportBatch",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="transfers",
+        help_text="Optional: if this transfer came from a CSV import batch.",
+    )
+
+    # Split transfer fields
+    parent_transfer = models.ForeignKey(
+        'self',
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name='splits',
+        help_text='Parent transfer if this is a split'
+    )
+    is_split_parent = models.BooleanField(
+        default=False,
+        help_text='True if this transfer has been split into child transfers'
+    )
+    split_order = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        help_text='Order of split (1, 2, 3...) for display purposes'
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["date", "id"]
+
+    def __str__(self):
+        parts = [str(self.date), f"${self.amount}"]
+        if self.from_account and self.to_account:
+            parts.append(f"{self.from_account} → {self.to_account}")
+        elif self.from_account:
+            parts.append(f"from {self.from_account} → external")
+        elif self.to_account:
+            parts.append(f"external → {self.to_account}")
+        else:
+            parts.append("(no accounts)")
+        if self.description:
+            parts.append(f"– {self.description}")
+        return " ".join(parts)
+
+    @property
+    def is_split(self) -> bool:
+        """Returns True if this transfer is part of a split (parent or child)."""
+        return self.is_split_parent or self.parent_transfer is not None
+
+    @property
+    def split_count(self) -> int:
+        """Returns number of child splits if this is a parent."""
+        return self.splits.count() if self.is_split_parent else 0
+
+    @property
+    def total_split_amount(self) -> Decimal:
+        """Returns sum of all child split amounts."""
+        if not self.is_split_parent:
+            return Decimal('0')
+        return self.splits.aggregate(
+            total=Coalesce(Sum('amount'), Decimal('0'))
+        )['total']
+
+    def validate_split_amounts(self) -> bool:
+        """Validates that split amounts sum to parent amount within tolerance."""
+        if not self.is_split_parent:
+            return True
+        tolerance = Decimal('0.005')
+        diff = abs(self.amount - self.total_split_amount)
+        return diff <= tolerance
+
+    def can_be_split(self) -> bool:
+        """Returns True if transfer can be split."""
+        return self.parent_transfer is None and not self.is_split_parent
 
 
 class Income(models.Model):

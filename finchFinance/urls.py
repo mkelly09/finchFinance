@@ -25,5 +25,6 @@ from django.conf.urls.static import static
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('accounts/', include('django.contrib.auth.urls')),  # Login, logout, password reset
     path('', include('home.urls')),  # adjust to match your app name
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

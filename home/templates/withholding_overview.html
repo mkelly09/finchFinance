@@ -1,220 +1,324 @@
 {% extends 'base.html' %}
-{% load static finance_filters %}
+{% load static finance_filters humanize %}
 
 {% block content %}
-<div class="container mt-4">
-    <h1 class="mb-3">Withholding Overview</h1>
-    <p class="text-muted mb-4">
-        Summary of your withholding accounts and buckets. Click a bucket name to see and edit its transactions.
-    </p>
+<style>
+  .withholding-container {
+    max-width: 1400px;
+    margin: 0 auto;
+  }
 
-    <style>
-        .account-card {
-            border: 1px solid #ddd;
-            border-radius: 8px;
-            padding: 16px 20px;
-            margin-bottom: 20px;
-            background-color: #fafafa;
-        }
-        .account-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: baseline;
-            margin-bottom: 10px;
-        }
-        .account-name {
-            font-size: 1.1rem;
-            font-weight: 600;
-        }
-        .account-meta {
-            color: #666;
-            font-size: 0.9rem;
-        }
-        .summary-line {
-            font-size: 0.9rem;
-            margin: 2px 0;
-        }
-        .summary-line strong {
-            font-weight: 600;
-        }
-        .badge-pill {
-            display: inline-block;
-            padding: 2px 6px;
-            border-radius: 999px;
-            font-size: 0.7rem;
-            font-weight: 600;
-        }
-        .badge-success-soft {
-            background-color: #d1fae5;
-            color: #065f46;
-        }
-        .badge-danger-soft {
-            background-color: #fee2e2;
-            color: #991b1b;
-        }
-        .badge-warning-soft {
-            background-color: #fef9c3;
-            color: #854d0e;
-        }
-        .withholding-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.9rem;
-        }
-        .withholding-table th,
-        .withholding-table td {
-            padding: 6px 8px;
-            border-bottom: 1px solid #eee;
-        }
-        .withholding-table th {
-            text-align: left;
-            background-color: #f3f4f6;
-        }
-        .withholding-table td.right {
-            text-align: right;
-        }
-        a.bucket-link {
-            color: #2563eb;
-            text-decoration: none;
-        }
-        a.bucket-link:hover {
-            text-decoration: underline;
-        }
-    </style>
-    {% if payout_form %}
-<div class="card mb-4">
-    <div class="card-header">
-        Record withholding payout
+  .account-card {
+    border-radius: 12px;
+    border: none;
+    padding: 0;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    background-color: #fff;
+    margin-bottom: 24px;
+    overflow: hidden;
+  }
+
+  .account-header {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 20px 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .account-name {
+    font-size: 1.3rem;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+
+  .account-meta {
+    color: rgba(255,255,255,0.9);
+    font-size: 0.95rem;
+  }
+
+  .account-summary {
+    display: flex;
+    gap: 32px;
+    flex-wrap: wrap;
+  }
+
+  .summary-metric {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .summary-label {
+    font-size: 0.85rem;
+    opacity: 0.9;
+    margin-bottom: 4px;
+  }
+
+  .summary-value {
+    font-size: 1.2rem;
+    font-weight: 700;
+  }
+
+  .buckets-table {
+    margin: 0;
+  }
+
+  .buckets-table th {
+    background-color: #f8f9fa;
+    border-bottom: 2px solid #dee2e6;
+    font-weight: 600;
+    color: #495057;
+    text-transform: uppercase;
+    font-size: 0.8rem;
+    letter-spacing: 0.5px;
+    padding: 12px 16px;
+  }
+
+  .buckets-table tbody tr {
+    transition: background-color 0.2s ease;
+  }
+
+  .buckets-table tbody tr:hover {
+    background-color: #f8f9fa;
+  }
+
+  .buckets-table td {
+    padding: 14px 16px;
+    vertical-align: middle;
+  }
+
+  a.bucket-link {
+    text-decoration: none;
+    font-weight: 500;
+    color: #0d6efd;
+    font-size: 0.95rem;
+  }
+
+  a.bucket-link:hover {
+    text-decoration: underline;
+  }
+
+  .progress-mini {
+    height: 6px;
+    border-radius: 3px;
+    background-color: #e9ecef;
+    margin-top: 6px;
+    overflow: hidden;
+  }
+
+  .progress-mini-bar {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.3s ease;
+  }
+
+  .badge-target {
+    background-color: #e7f3ff;
+    color: #0066cc;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    font-weight: 500;
+  }
+
+  .text-muted-custom {
+    color: #6c757d;
+    font-size: 0.9rem;
+  }
+
+  .month-activity {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .activity-in {
+    color: #198754;
+    font-weight: 500;
+  }
+
+  .activity-out {
+    color: #dc3545;
+    font-weight: 500;
+  }
+
+  .header-controls {
+    background: white;
+    padding: 20px 24px;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    margin-bottom: 24px;
+  }
+</style>
+
+<div class="withholding-container mt-4">
+  <div class="row align-items-end mb-4">
+    <div class="col-lg-8">
+      <h1 class="mb-2">🏦 Withholding Buckets</h1>
+      <p class="text-muted mb-0">
+        Track your savings and future expense buckets. Balances are calculated from actual money movement
+        (transfers and expenses). Activity shown for <strong>{{ selected_month_display }}</strong>.
+      </p>
     </div>
-    <div class="card-body">
-        <form method="post" class="row g-3">
-            {% csrf_token %}
-
-            <div class="col-md-3">
-                {{ payout_form.date.label_tag }}
-                {{ payout_form.date }}
-            </div>
-
-            <div class="col-md-5">
-                {{ payout_form.withholding_category.label_tag }}
-                {{ payout_form.withholding_category }}
-            </div>
-
-            <div class="col-md-2">
-                {{ payout_form.amount.label_tag }}
-                {{ payout_form.amount }}
-            </div>
-
-            <div class="col-md-8">
-                {{ payout_form.note.label_tag }}
-                {{ payout_form.note }}
-            </div>
-
-            <div class="col-md-4 text-end align-self-end">
-                <button type="submit" class="btn btn-outline-danger">
-                    Record payout
-                </button>
-            </div>
+    <div class="col-lg-4 mt-3 mt-lg-0">
+      <div class="header-controls">
+        <form method="get" class="row g-2">
+          <div class="col-12">
+            <label for="month" class="form-label mb-1 fw-semibold">Activity Month:</label>
+            <input type="month"
+                   name="month"
+                   id="month"
+                   class="form-control"
+                   value="{{ selected_month }}">
+          </div>
+          <div class="col-12">
+            <button type="submit" class="btn btn-primary w-100">Update View</button>
+          </div>
         </form>
+      </div>
     </div>
-</div>
-{% endif %}
+  </div>
 
-    {% if accounts %}
-        {% for account in accounts %}
-            <div class="account-card">
-                <div class="account-header">
-                    <div>
-                        <div class="account-name">{{ account.name }}</div>
-                        <div class="account-meta">
-                            {{ account.institution }}
-                            {% if account.account_number_last4 %}
-                                &nbsp;·&nbsp;•••• {{ account.account_number_last4 }}
-                            {% endif %}
-                        </div>
-                    </div>
-                    <div class="text-end" style="font-size: 0.9rem;">
-                        <div class="summary-line">
-                            Actual balance:
-                            <strong>{{ account.current_balance|currency }}</strong>
-                        </div>
-                        <div class="summary-line">
-                            In buckets:
-                            <strong>{{ account.withholding_total|currency }}</strong>
-                        </div>
-                        <div class="summary-line">
-                            Unallocated:
-                            <strong>{{ account.unallocated_balance|currency }}</strong>
-                            {% if account.unallocated_balance > 0 %}
-                                <span class="badge-pill badge-success-soft">extra cash</span>
-                            {% elif account.unallocated_balance < 0 %}
-                                <span class="badge-pill badge-danger-soft">over-allocated</span>
-                            {% endif %}
-                        </div>
-                    </div>
-                </div>
-
-                {% if account.withholding_categories.all %}
-                    <table class="withholding-table">
-                        <thead>
-                            <tr>
-                                <th>Bucket</th>
-                                <th class="right">Balance</th>
-                                <th class="right">Target</th>
-                                <th class="right">Remaining</th>
-                                <th>Next due</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for bucket in account.withholding_categories.all %}
-                                {% with remaining=bucket.remaining_to_target %}
-                                <tr>
-                                    <td>
-                                        <a class="bucket-link" href="{% url 'withholding_category_detail' bucket.pk %}">
-                                            {{ bucket.name }}
-                                        </a>
-                                    </td>
-                                    <td class="right">{{ bucket.balance|currency }}</td>
-                                    <td class="right">
-                                        {% if bucket.target_amount %}
-                                            {{ bucket.target_amount|currency }}
-                                        {% else %}
-                                            <span class="account-meta">Not set</span>
-                                        {% endif %}
-                                    </td>
-                                    <td class="right">
-                                        {% if bucket.target_amount %}
-                                            {{ remaining|currency }}
-                                            {% if remaining > 0 %}
-                                                <span class="badge-pill badge-warning-soft">to go</span>
-                                            {% elif remaining < 0 %}
-                                                <span class="badge-pill badge-danger-soft">over target</span>
-                                            {% else %}
-                                                <span class="badge-pill badge-success-soft">on target</span>
-                                            {% endif %}
-                                        {% else %}
-                                            <span class="account-meta">—</span>
-                                        {% endif %}
-                                    </td>
-                                    <td>
-                                        {% if bucket.next_due_date %}
-                                            {{ bucket.next_due_date }}
-                                        {% else %}
-                                            <span class="account-meta">Not set</span>
-                                        {% endif %}
-                                    </td>
-                                </tr>
-                                {% endwith %}
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                {% else %}
-                    <p class="account-meta mb-0">No buckets defined for this account yet.</p>
-                {% endif %}
+  {% if accounts %}
+    {% for account in accounts %}
+      <div class="account-card">
+        <div class="account-header">
+          <div>
+            <div class="account-name">{{ account.name }}</div>
+            <div class="account-meta">
+              {{ account.institution }}
+              {% if account.account_number_last4 %}
+                &nbsp;·&nbsp;•••• {{ account.account_number_last4 }}
+              {% endif %}
             </div>
-        {% endfor %}
-    {% else %}
-        <p>No withholding accounts configured yet.</p>
-    {% endif %}
+          </div>
+          <div class="account-summary">
+            <div class="summary-metric">
+              <div class="summary-label">Account Balance</div>
+              <div class="summary-value">
+                {% if account.current_balance %}
+                  {{ account.current_balance|currency }}
+                {% else %}
+                  $0.00
+                {% endif %}
+              </div>
+            </div>
+            <div class="summary-metric">
+              <div class="summary-label">In Buckets</div>
+              <div class="summary-value">{{ account.total_bucket_balance|default_if_none:0|currency }}</div>
+            </div>
+            <div class="summary-metric">
+              <div class="summary-label">This Month</div>
+              <div class="summary-value" style="font-size: 1rem;">
+                <span style="color: #a8f5d0;">+{{ account.total_month_contrib|default_if_none:0|currency }}</span>
+                &nbsp;/&nbsp;
+                <span style="color: #ffb3ba;">−{{ account.total_month_payout|default_if_none:0|currency }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {% if account.withholding_categories.all %}
+          <table class="table buckets-table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th style="width: 25%;">Bucket Name</th>
+                <th class="text-end" style="width: 12%;">Balance</th>
+                <th class="text-end" style="width: 12%;">Monthly Target</th>
+                <th class="text-end" style="width: 15%;">
+                  This Month
+                  <div style="font-size: 0.75rem; text-transform: none; font-weight: normal; opacity: 0.8;">
+                    (in / out)
+                  </div>
+                </th>
+                <th class="text-end" style="width: 12%;">Goal Target</th>
+                <th class="text-end" style="width: 12%;">Remaining</th>
+                <th class="text-end" style="width: 12%;">Next Due</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for bucket in account.withholding_categories.all %}
+                <tr>
+                  <td>
+                    <a class="bucket-link" href="{% url 'withholding_category_detail' bucket.pk %}">
+                      {{ bucket.name }}
+                    </a>
+                    {% if bucket.monthly_target %}
+                      {% widthratio bucket.month_contrib 1 bucket.monthly_target as percent %}
+                      <div class="progress-mini">
+                        <div class="progress-mini-bar" style="width: {% if percent > 100 %}100{% else %}{{ percent }}{% endif %}%;
+                          background-color: {% if percent >= 100 %}#198754{% elif percent >= 75 %}#20c997{% elif percent >= 50 %}#0dcaf0{% elif percent >= 25 %}#ffc107{% else %}#dc3545{% endif %};"></div>
+                      </div>
+                    {% endif %}
+                  </td>
+                  <td class="text-end">
+                    <strong>{{ bucket.derived_balance|currency }}</strong>
+                  </td>
+                  <td class="text-end">
+                    {% if bucket.monthly_target %}
+                      <span class="badge-target">{{ bucket.monthly_target|currency }}</span>
+                    {% else %}
+                      <span class="text-muted-custom">Not set</span>
+                    {% endif %}
+                  </td>
+                  <td class="text-end">
+                    {% if bucket.month_contrib or bucket.month_payout %}
+                      <div class="month-activity">
+                        <span class="activity-in">+{{ bucket.month_contrib|currency }}</span>
+                        <span class="activity-out">−{{ bucket.month_payout|currency }}</span>
+                      </div>
+                    {% else %}
+                      <span class="text-muted-custom">No activity</span>
+                    {% endif %}
+                  </td>
+                  <td class="text-end">
+                    {% if bucket.target_amount %}
+                      {{ bucket.target_amount|currency }}
+                    {% else %}
+                      <span class="text-muted-custom">Not set</span>
+                    {% endif %}
+                  </td>
+                  <td class="text-end">
+                    {% if bucket.remaining_to_target is not None %}
+                      {% if bucket.remaining_to_target > 0 %}
+                        <span style="color: #0dcaf0; font-weight: 500;">{{ bucket.remaining_to_target|currency }}</span>
+                      {% else %}
+                        <span style="color: #198754; font-weight: 500;">✓ Met</span>
+                      {% endif %}
+                    {% else %}
+                      <span class="text-muted-custom">—</span>
+                    {% endif %}
+                  </td>
+                  <td class="text-end">
+                    {% if bucket.next_due_date %}
+                      <span style="font-size: 0.9rem;">{{ bucket.next_due_date|date:"M d, Y" }}</span>
+                    {% else %}
+                      <span class="text-muted-custom">Not set</span>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <div style="padding: 24px;">
+            <p class="text-muted mb-0">No buckets defined for this account yet.</p>
+          </div>
+        {% endif %}
+      </div>
+    {% endfor %}
+  {% else %}
+    <div class="alert alert-info">
+      <strong>No withholding accounts configured yet.</strong>
+      <p class="mb-0 mt-2">Withholding accounts help you set aside money for future expenses like taxes, insurance, and savings goals.</p>
+    </div>
+  {% endif %}
+
+  <div class="mt-4">
+    <a class="btn btn-outline-secondary" href="{% url 'dashboard' %}?month={{ selected_month }}">
+      ← Back to Dashboard
+    </a>
+  </div>
 </div>
 {% endblock %}

@@ -5,12 +5,14 @@ from calendar import monthrange
 from collections import defaultdict
 from datetime import datetime, date, timedelta
 from decimal import Decimal, InvalidOperation
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
+
 
 from django.contrib import messages
 from django.db.models import Sum, F, Value, DecimalField, ExpressionWrapper, Case, When, Count
+from django import forms
 from django.forms import ModelForm, formset_factory
-from django.http import HttpResponseBadRequest
+from django.http import HttpResponseBadRequest, JsonResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods, require_POST
@@ -18,7 +20,7 @@ from django.conf import settings
 from django.urls import reverse
 from django.db.models.functions import Coalesce
 
-from .forms import TransactionForm, CSVUploadForm, TransactionImportForm, ExpenseEditForm, ExpenseAttachmentUploadForm, WithholdingPayoutForm
+from .forms import TransactionForm, CSVUploadForm, TransactionImportForm, ExpenseEditForm, ExpenseAttachmentUploadForm, WithholdingPayoutForm, IncomeEditForm, TransferEditForm
 from .models import (
     Expense,
     ExpenseAttachment,
@@ -29,13 +31,14 @@ from .models import (
     ImportBatch,
     WithholdingCategory,
     WithholdingTransaction,
-
+    Transfer,
 
     # ✅ Rental / CRA additions
     RentalProperty,
     RentalUnit,
     CRARentalExpenseCategory,
 )
+
 
 TransactionImportFormSet = formset_factory(TransactionImportForm, extra=0)
 
@@ -166,6 +169,18 @@ def get_arnprior_shared_unit_id():
     )
     return unit.id if unit else None
 
+def get_foxview_shared_unit_id():
+    """
+    Best-effort lookup for the Foxview shared/common unit.
+    Returns RentalUnit.id or None (never raises).
+    """
+    qs = RentalUnit.objects.select_related("property").filter(property__name__iexact="Foxview")
+    unit = (
+        qs.filter(name__icontains="shared").order_by("name").first()
+        or qs.filter(name__icontains="common").order_by("name").first()
+    )
+    return unit.id if unit else None
+
 def build_income_rental_unit_map():
     """
     Used by import review UI to display inferred rental unit for an IncomeCategory.
@@ -191,6 +206,19 @@ def dashboard(request):
     last_day = date(year, month, monthrange(year, month)[1])
     selected_month_display = first_day.strftime("%B %Y")
 
+    # Month navigation
+    prev_month_date = date(year, month, 1) - timedelta(days=1)  # Go to last day of previous month
+    prev_month = prev_month_date.strftime("%Y-%m")
+
+    current_month = today.strftime("%Y-%m")
+
+    # Next month calculation
+    if month == 12:
+        next_month_date = date(year + 1, 1, 1)
+    else:
+        next_month_date = date(year, month + 1, 1)
+    next_month = next_month_date.strftime("%Y-%m")
+
     if request.method == "POST":
         # -------------------------
         # Expense modal edit/delete
@@ -207,10 +235,24 @@ def dashboard(request):
                 expense.category = get_object_or_404(Category, name=category_name)
 
                 expense.location = request.POST.get("location", "Ottawa")
-                expense.amount = Decimal(request.POST["amount"])
+
+                amount_str = (request.POST.get("amount") or "").strip()
+                if amount_str:
+                    try:
+                        expense.amount = Decimal(amount_str)
+                    except (InvalidOperation, ValueError):
+                        pass
+
                 expense.notes = request.POST.get("notes", "")
 
-                # ✅ NEW: Rental fields (optional)
+                # Bank account
+                bank_account_id = (request.POST.get("bank_account") or "").strip()
+                if bank_account_id:
+                    expense.bank_account = get_object_or_404(BankAccount, pk=bank_account_id)
+                else:
+                    expense.bank_account = None
+
+                # Rental + CRA fields
                 rental_unit_id = (request.POST.get("rental_unit") or "").strip()
                 if rental_unit_id:
                     expense.rental_unit = get_object_or_404(RentalUnit, pk=rental_unit_id)
@@ -219,7 +261,10 @@ def dashboard(request):
 
                 cra_category_id = (request.POST.get("cra_category") or "").strip()
                 if cra_category_id:
-                    expense.cra_category = get_object_or_404(CRARentalExpenseCategory, pk=cra_category_id)
+                    expense.cra_category = get_object_or_404(
+                        CRARentalExpenseCategory,
+                        pk=cra_category_id
+                    )
                 else:
                     expense.cra_category = None
 
@@ -249,25 +294,43 @@ def dashboard(request):
 
                 income.income_category = income_cat
                 if income_cat:
-                    income.category = income_cat.name  # legacy sync for now
+                    # legacy sync for now
+                    income.category = income_cat.name
 
-                income.amount = Decimal(request.POST["amount"])
-                income.taxable = request.POST.get("taxable") == "1"
+                amount_str = (request.POST.get("amount") or "").strip()
+                if amount_str:
+                    try:
+                        income.amount = Decimal(amount_str)
+                    except (InvalidOperation, ValueError):
+                        pass
+
+                taxable = request.POST.get("taxable") == "1"
+                income.taxable = taxable
+
                 income.notes = request.POST.get("notes", "")
+
                 rental_unit_id = (request.POST.get("rental_unit") or "").strip()
-                # If user didn't provide rental_unit, fall back to the category's default (if any)
-                if not rental_unit_id and income_cat and income_cat.default_rental_unit_id:
-                    income.rental_unit = income_cat.default_rental_unit
+                if rental_unit_id:
+                    income.rental_unit = get_object_or_404(RentalUnit, pk=rental_unit_id)
                 else:
-                    if rental_unit_id:
-                        income.rental_unit = get_object_or_404(RentalUnit, pk=rental_unit_id)
-                    else:
-                        income.rental_unit = None
+                    income.rental_unit = None
+
+                bank_account_id = (request.POST.get("bank_account") or "").strip()
+                if bank_account_id:
+                    income.bank_account = get_object_or_404(BankAccount, pk=bank_account_id)
+                else:
+                    income.bank_account = None
 
                 income.save()
 
             selected_month_param = f"{income.date.year:04d}-{income.date.month:02d}"
             return redirect(f"/?month={selected_month_param}")
+
+        # -------------------------
+        # Transfer modal edit/delete
+        # -------------------------
+        elif "transfer_id" in request.POST:
+            return handle_transfer_edit(request)
 
         # -------------------------
         # New transaction (Add Transaction form)
@@ -277,88 +340,78 @@ def dashboard(request):
             if form.is_valid():
                 entry_type = form.cleaned_data["entry_type"]
                 entry_date = form.cleaned_data["date"]
-                amount = form.cleaned_data["amount"]
-                notes = form.cleaned_data["notes"]
 
-
-                if entry_type == "income":
-                    source = form.cleaned_data["source"]  # IncomeCategory instance or None
-                    income_rental_unit = form.cleaned_data.get("income_rental_unit")
-                    if not income_rental_unit and source and source.default_rental_unit_id:
-                        income_rental_unit = source.default_rental_unit
-
-                    income_exists = Income.objects.filter(
+                if entry_type == "expense":
+                    expense = Expense(
                         date=entry_date,
-                        amount=amount,
-                        income_category=source,
-                    ).exists()
+                        vendor_name=form.cleaned_data["vendor_name"],
+                        category=form.cleaned_data["category"],
+                        amount=form.cleaned_data["amount"],
+                        location=form.cleaned_data.get("location") or "Ottawa",
+                        notes=form.cleaned_data.get("notes") or "",
+                        bank_account=form.cleaned_data.get("bank_account"),
+                    )
 
-                    if income_exists:
-                        messages.warning(request, "This income transaction already exists and was not added again.")
+                    # Rental + CRA extras
+                    expense.rental_unit = form.cleaned_data.get("rental_unit") or None
+                    expense.cra_category = form.cleaned_data.get("cra_category") or None
+                    pct = form.cleaned_data.get("rental_business_use_pct")
+                    expense.rental_business_use_pct = pct if pct is not None else None
+
+                    # Withholding application from expense
+                    if form.cleaned_data.get("apply_to_withholding"):
+                        expense.withholding_category = form.cleaned_data.get("withholding_category")
                     else:
-                        Income.objects.create(
-                            date=entry_date,
-                            amount=amount,
-                            income_category=source,
-                            category=source.name if source else "",  # legacy sync
-                            taxable=form.cleaned_data["taxable"],
-                            notes=notes,
-                            rental_unit=income_rental_unit,
-                        )
+                        expense.withholding_category = None
 
-                else:
-                    vendor_name = form.cleaned_data["vendor_name"]
-                    category = form.cleaned_data["category"]
-                    location = form.cleaned_data.get("location", "Ottawa")
+                    expense.save()
+                    messages.success(request, "Expense saved successfully!")
 
-                    apply_to_withholding = form.cleaned_data.get("apply_to_withholding")
-                    withholding_category = form.cleaned_data.get("withholding_category")
-
-                    # ✅ NEW: rental fields from TransactionForm
-                    rental_unit = form.cleaned_data.get("rental_unit")
-                    cra_category = form.cleaned_data.get("cra_category")
-                    rental_pct = form.cleaned_data.get("rental_business_use_pct")
-
-                    expense_exists = Expense.objects.filter(
+                elif entry_type == "income":
+                    income = Income(
                         date=entry_date,
-                        amount=amount,
-                        vendor_name=vendor_name,
-                        category=category,
-                    ).exists()
+                        income_category=form.cleaned_data.get("source"),
+                        amount=form.cleaned_data["amount"],
+                        taxable=form.cleaned_data.get("taxable", False),
+                        notes=form.cleaned_data.get("notes") or "",
+                        bank_account=form.cleaned_data.get("bank_account"),
+                    )
 
-                    if expense_exists:
-                        messages.warning(request, "This expense transaction already exists and was not added again.")
-                    else:
-                        Expense.objects.create(
-                            date=entry_date,
-                            amount=amount,
-                            vendor_name=vendor_name,
-                            category=category,
-                            location=location,
-                            notes=notes,
+                    if income.income_category:
+                        income.category = income.income_category.name
 
-                            # ✅ NEW fields persisted
-                            rental_unit=rental_unit,
-                            cra_category=cra_category,
-                            rental_business_use_pct=rental_pct,
-                        )
+                    income.rental_unit = form.cleaned_data.get("income_rental_unit") or None
 
-                        if apply_to_withholding and withholding_category:
-                            WithholdingTransaction.objects.create(
-                                category=withholding_category,
-                                date=entry_date,
-                                amount=amount,
-                                note=notes or vendor_name or "",
-                            )
+                    income.save()
+                    messages.success(request, "Income saved successfully!")
 
-                selected_month_param = f"{year:04d}-{month:02d}"
-                return redirect(f"/?month={selected_month_param}")
+                elif entry_type == "transfer":
+                    transfer = Transfer(
+                        date=entry_date,
+                        from_account=form.cleaned_data.get("from_account"),
+                        to_account=form.cleaned_data.get("to_account"),
+                        amount=form.cleaned_data["amount"],
+                        notes=form.cleaned_data.get("notes") or "",
+                        withholding_category=form.cleaned_data.get("withholding_category") or None,
+                    )
+                    transfer.save()
+                    messages.success(request, "Transfer saved successfully!")
+
+                # Only redirect if form was valid and transaction was saved
+                return redirect(f"/?month={selected_month_str}")
+            else:
+                # Form is invalid - show errors
+                messages.error(request, f"Form validation failed: {form.errors}")
     else:
-        form = TransactionForm()
+        form = TransactionForm(initial={"date": selected_date})
 
-    income_entries = Income.objects.filter(date__range=(first_day, last_day)).select_related(
-        "income_category",
-        "bank_account",
+    # -------------------------
+    # Query transactions for month
+    # -------------------------
+    income_entries = (
+        Income.objects
+        .filter(date__range=(first_day, last_day))
+        .select_related("income_category", "bank_account")
     )
 
     expense_entries = (
@@ -368,9 +421,19 @@ def dashboard(request):
         .annotate(attachment_count=Count("attachments", distinct=True))
     )
 
+    # Transfers for this month (exclude split children, only show parents and non-split transfers)
+    transfer_entries = (
+        Transfer.objects
+        .filter(date__range=(first_day, last_day))
+        .filter(parent_transfer__isnull=True)  # Exclude split children
+        .select_related("from_account", "to_account", "withholding_category")
+        .prefetch_related("splits")  # Eager load children for display
+    )
+
     total_income = sum(i.amount for i in income_entries)
     total_expenses = sum(e.amount for e in expense_entries)
     net_savings = total_income - total_expenses
+    total_transfers = sum(t.amount for t in transfer_entries)
 
     income_by_source = defaultdict(list)
     for income in income_entries:
@@ -385,38 +448,37 @@ def dashboard(request):
         expenses_by_category[category_name] += expense.amount
 
         if category_name not in targets_by_category:
-            try:
-                category_obj = Category.objects.get(name=category_name)
-                targets_by_category[category_name] = category_obj.monthly_limit
-            except Category.DoesNotExist:
-                targets_by_category[category_name] = Decimal("0.00")
-
-    month_expenses = Expense.objects.filter(date__year=selected_date.year, date__month=selected_date.month)
-    categories_with_targets = Category.objects.exclude(monthly_limit__isnull=True)
+            targets_by_category[category_name] = expense.category.monthly_limit or Decimal("0")
 
     category_summaries = []
-    for category in categories_with_targets:
-        total_spent = month_expenses.filter(category=category).aggregate(total=Sum("amount"))["total"] or Decimal("0.00")
-        percent_used = (total_spent / category.monthly_limit * 100) if category.monthly_limit > 0 else 0
+    for cat_name, spent in expenses_by_category.items():
+        target = targets_by_category.get(cat_name, Decimal("0"))
         category_summaries.append({
-            "name": category.name,
-            "target": category.monthly_limit,
-            "spent": total_spent,
-            "percent_used": round(percent_used, 1),
-            "over_budget": total_spent > category.monthly_limit,
+            "name": cat_name,
+            "spent": spent,
+            "target": target,
         })
 
-    accounts = BankAccount.objects.all().order_by("name")
+    category_summaries.sort(key=lambda cs: cs["name"])
+
+    accounts = BankAccount.objects.all().order_by("institution", "name")
 
     context = {
         "form": form,
         "selected_month": f"{year:04d}-{month:02d}",
         "selected_month_display": selected_month_display,
+        "prev_month": prev_month,
+        "current_month": current_month,
+        "next_month": next_month,
+
         "income_entries": income_entries,
         "expense_entries": expense_entries,
+        "transfer_entries": transfer_entries,
+
         "total_income": total_income,
         "total_expenses": total_expenses,
         "net_savings": net_savings,
+        "total_transfers": total_transfers,
         "income_by_source": dict(income_by_source),
         "expenses_by_category": dict(expenses_by_category),
         "targets_by_category": targets_by_category,
@@ -425,17 +487,24 @@ def dashboard(request):
         "accounts": accounts,
         "income_categories": IncomeCategory.objects.all().order_by("name"),
 
-        # ✅ NEW: needed for dashboard expense modal + add-transaction dropdowns
+        # Rental / CRA dropdowns for modals + add-transaction form
         "all_rental_units": RentalUnit.objects.select_related("property").order_by("property__name", "name"),
         "cra_categories": CRARentalExpenseCategory.objects.filter(is_active=True).order_by("sort_order", "name"),
         "income_source_default_unit_map": {
             str(c.id): (c.default_rental_unit_id or "")
             for c in IncomeCategory.objects.all()
         },
-
+        "income_source_taxable_map": {
+            str(c.id): c.taxable_default
+            for c in IncomeCategory.objects.all()
+        },
+        "withholding_categories": WithholdingCategory.objects.select_related("account").order_by("account__name", "name"),
     }
 
     return render(request, "dashboard.html", context)
+
+
+
 
 def category_progress(request):
     today = date.today()
@@ -449,35 +518,78 @@ def category_progress(request):
     last_day = date(year, month, monthrange(year, month)[1])
     selected_month_display = first_day.strftime("%B %Y")
 
+    def get_progress_color(percent):
+        """Get a granular color based on percentage (0-100+)"""
+        if percent >= 100:
+            return "#dc3545"  # Red - over budget
+        elif percent >= 90:
+            return "#fd7e14"  # Orange - approaching limit
+        elif percent >= 80:
+            return "#ffc107"  # Yellow - caution zone
+        elif percent >= 70:
+            return "#20c997"  # Teal - good progress
+        elif percent >= 50:
+            return "#0dcaf0"  # Cyan - moderate progress
+        else:
+            return "#198754"  # Green - well under budget
+
+    def get_income_progress_color(percent):
+        """Get a granular color for income (inverse logic - higher is better)"""
+        if percent >= 100:
+            return "#198754"  # Green - target met
+        elif percent >= 90:
+            return "#20c997"  # Teal - almost there
+        elif percent >= 75:
+            return "#0dcaf0"  # Cyan - good progress
+        elif percent >= 50:
+            return "#ffc107"  # Yellow - halfway
+        elif percent >= 25:
+            return "#fd7e14"  # Orange - behind
+        else:
+            return "#dc3545"  # Red - significantly behind
+
+    # ========= EXPENSE PROGRESS =========
     categories_with_targets = Category.objects.exclude(monthly_limit__isnull=True)
 
     expense_summaries = []
+    total_expenses_actual = Decimal("0.00")
+    total_expenses_remaining = Decimal("0.00")
+
     for category in categories_with_targets:
         total_spent = (
             Expense.objects.filter(category=category, date__range=(first_day, last_day))
             .aggregate(total=Sum("amount"))["total"]
             or Decimal("0.00")
         )
-        percent_used = (total_spent / category.monthly_limit * 100) if category.monthly_limit and category.monthly_limit > 0 else 0
+        percent_used = (
+            total_spent / category.monthly_limit * 100
+            if category.monthly_limit and category.monthly_limit > 0
+            else 0
+        )
 
-        if percent_used >= 130:
-            bar_class = "bg-danger"
-        elif percent_used >= 85:
-            bar_class = "bg-warning"
-        else:
-            bar_class = "bg-success"
+        total_expenses_actual += total_spent
 
-        expense_summaries.append({
-            "name": category.name,
-            "target": category.monthly_limit,
-            "actual": total_spent,
-            "percent": round(percent_used, 1),
-            "bar_class": bar_class,
-        })
+        # Calculate remaining planned expenses for this category
+        if total_spent < category.monthly_limit:
+            total_expenses_remaining += (category.monthly_limit - total_spent)
 
+        expense_summaries.append(
+            {
+                "name": category.name,
+                "target": category.monthly_limit,
+                "actual": total_spent,
+                "percent": round(percent_used, 1),
+                "bar_color": get_progress_color(percent_used),
+            }
+        )
+
+    # ========= INCOME PROGRESS =========
     income_categories = IncomeCategory.objects.all()
 
     income_summaries = []
+    total_income_actual = Decimal("0.00")
+    total_income_remaining = Decimal("0.00")
+
     for inc_cat in income_categories:
         target = inc_cat.monthly_target or Decimal("0.00")
 
@@ -487,102 +599,260 @@ def category_progress(request):
             or Decimal("0.00")
         )
 
+        total_income_actual += total_received
+
+        # Calculate remaining expected income
+        if target > 0 and total_received < target:
+            total_income_remaining += (target - total_received)
+
         percent_received = (total_received / target * 100) if target > 0 else 0
 
-        if target <= 0:
-            bar_class = "bg-secondary"
-        elif percent_received >= 100:
-            bar_class = "bg-success"
-        elif percent_received >= 85:
-            bar_class = "bg-warning"
-        else:
-            bar_class = "bg-danger"
-
-        income_summaries.append({
-            "id": inc_cat.id,
-            "name": inc_cat.name,
-            "target": target,
-            "actual": total_received,
-            "percent": round(percent_received, 1),
-            "bar_class": bar_class,
-        })
+        income_summaries.append(
+            {
+                "id": inc_cat.id,
+                "name": inc_cat.name,
+                "target": target,
+                "actual": total_received,
+                "percent": round(percent_received, 1),
+                "bar_color": get_income_progress_color(percent_received) if target > 0 else "#6c757d",
+            }
+        )
 
     income_summaries.sort(key=lambda x: x["name"].lower())
     expense_summaries.sort(key=lambda x: x["name"].lower())
 
+    # ========= TRACK JENNA TRANSFERS AS INCOME =========
+    jenna_transfers = Decimal("0.00")
+    try:
+        jenna_account = BankAccount.objects.get(name="Jenna (EXT)")
+        # Outflows from Jenna's account = money she's sending
+        jenna_transfers = (
+            Transfer.objects.filter(
+                date__range=(first_day, last_day),
+                from_account=jenna_account
+            )
+            .aggregate(total=Sum("amount"))["total"]
+            or Decimal("0.00")
+        )
+    except BankAccount.DoesNotExist:
+        pass  # Account doesn't exist, leave at 0
+
+    # ========= WITHHOLDING / TRANSFER PROGRESS (monthly-based) =========
+
+    buckets = WithholdingCategory.objects.select_related("account").order_by("name")
+
+    # Track contributions and payouts separately for the selected month
+    month_contribs = defaultdict(Decimal)
+    month_payouts = defaultdict(Decimal)
+
+    # Transfers linked to a bucket
+    month_transfers = (
+        Transfer.objects.filter(
+            date__range=(first_day, last_day),
+            withholding_category__isnull=False,
+        )
+        .select_related("withholding_category", "from_account", "to_account")
+    )
+
+    for t in month_transfers:
+        bucket = t.withholding_category
+        if not bucket or not bucket.account:
+            continue
+
+        # Money going INTO the bucket's account = contribution
+        if t.to_account_id == bucket.account_id:
+            month_contribs[bucket.id] += t.amount
+        # Money leaving the bucket's account = payout
+        elif t.from_account_id == bucket.account_id:
+            month_payouts[bucket.id] += t.amount
+
+    # Expenses funded from a withholding bucket
+    month_bucket_expenses = (
+        Expense.objects.filter(
+            date__range=(first_day, last_day),
+            withholding_category__isnull=False,
+        ).select_related("withholding_category")
+    )
+
+    for e in month_bucket_expenses:
+        bucket = e.withholding_category
+        if not bucket:
+            continue
+        # Expense from a bucket always reduces it
+        month_payouts[bucket.id] += e.amount
+
+    # Define which buckets are "true savings" vs "future expenses"
+    SAVINGS_BUCKETS = ["vacation", "wedding", "rrsp"]  # Case-insensitive matching
+
+    withholding_summaries = []
+    total_withholding_remaining = Decimal("0.00")
+    total_savings_remaining = Decimal("0.00")
+    total_withholding_actual = Decimal("0.00")
+    total_savings_actual = Decimal("0.00")
+
+    for bucket in buckets:
+        monthly_target = bucket.monthly_target or Decimal("0.00")
+
+        # Only show buckets with a monthly target > 0
+        if monthly_target <= 0:
+            continue
+
+        contrib = month_contribs.get(bucket.id, Decimal("0.00"))
+        payout = month_payouts.get(bucket.id, Decimal("0.00"))
+        net = contrib - payout
+
+        balance = bucket.balance                # legacy ledger still used for now for balance
+        overall_target = bucket.target_amount   # yearly/overall target
+        remaining = bucket.remaining_to_target()
+
+        # Check if this is a savings bucket
+        is_savings = any(savings_name.lower() in bucket.name.lower() for savings_name in SAVINGS_BUCKETS)
+
+        # Track realized contributions (money already set aside this month)
+        if is_savings:
+            total_savings_actual += contrib
+        else:
+            total_withholding_actual += contrib
+
+        # Calculate remaining planned contributions
+        remaining_contrib = (monthly_target - contrib) if contrib < monthly_target else Decimal("0.00")
+
+        if is_savings:
+            total_savings_remaining += remaining_contrib
+        else:
+            total_withholding_remaining += remaining_contrib
+
+        # Progress bar is based on monthly contributions vs monthly_target
+        percent = (contrib / monthly_target) * Decimal("100")
+        percent = float(round(percent, 1))
+
+        withholding_summaries.append(
+            {
+                "id": bucket.id,
+                "name": bucket.name,
+                "balance": balance,
+                "overall_target": overall_target,
+                "remaining": remaining,
+                "monthly_target": monthly_target,
+                "month_contrib": contrib,
+                "month_payout": payout,
+                "month_net": net,
+                "percent": percent,
+                "bar_color": get_income_progress_color(percent),  # Use income color logic for contributions
+                "is_savings": is_savings,
+            }
+        )
+
+    # ========= CASH FLOW HEALTH CALCULATION =========
+    # Calculate total projected income
+    total_income_with_jenna = total_income_actual + jenna_transfers
+    total_projected_income = total_income_with_jenna + total_income_remaining
+
+    # Calculate all outflows (actual and planned)
+    # Expenses: actual spent + remaining budget
+    total_expenses_projected = total_expenses_actual + total_expenses_remaining
+
+    # Future expense buckets: money already set aside + remaining planned contributions
+    total_withholding_projected = total_withholding_actual + total_withholding_remaining
+
+    # Savings: money already saved + remaining planned contributions
+    total_savings_projected = total_savings_actual + total_savings_remaining
+
+    # Final projected balance = Income - all outflows
+    cash_flow_balance = (
+        total_projected_income
+        - total_expenses_projected
+        - total_withholding_projected
+        - total_savings_projected
+    )
+
+    # Determine health status based on final balance
+    if cash_flow_balance > 0:
+        health_status = "positive"
+        health_class = "success"
+        health_icon = "✅"
+    elif cash_flow_balance < 0:
+        health_status = "negative"
+        health_class = "danger"
+        health_icon = "⚠️"
+    else:
+        health_status = "neutral"
+        health_class = "secondary"
+        health_icon = "➖"
+
     context = {
         "income_summaries": income_summaries,
         "expense_summaries": expense_summaries,
+        "withholding_summaries": withholding_summaries,
         "selected_month": f"{year:04d}-{month:02d}",
         "selected_month_display": selected_month_display,
+        # Cash flow health data
+        "total_income_actual": total_income_actual,
+        "jenna_transfers": jenna_transfers,
+        "total_income_remaining": total_income_remaining,
+        "total_income_with_jenna": total_income_with_jenna,
+        "total_projected_income": total_projected_income,
+        "total_expenses_actual": total_expenses_actual,
+        "total_expenses_remaining": total_expenses_remaining,
+        "total_withholding_actual": total_withholding_actual,
+        "total_withholding_remaining": total_withholding_remaining,
+        "total_savings_actual": total_savings_actual,
+        "total_savings_remaining": total_savings_remaining,
+        "cash_flow_balance": cash_flow_balance,
+        "health_status": health_status,
+        "health_class": health_class,
+        "health_icon": health_icon,
+        "savings_buckets": SAVINGS_BUCKETS,  # For display in template
     }
     return render(request, "category_progress.html", context)
 
 def category_expense_list(request, category_name):
-    selected_month_str = request.GET.get("month")
-    range_key = request.GET.get("range", "6")
     today = date.today()
-
-    try:
-        year, month = map(int, (selected_month_str or "").split("-"))
-    except Exception:
-        year, month = today.year, today.month
+    selected_range = request.GET.get("range", "12")  # Default: Last 12 months
 
     category = get_object_or_404(Category, name=category_name)
-    anchor_month_start = date(year, month, 1)
 
+    # Build range options
+    current_year = today.year
+    range_options = [
+        ("12", "Last 12 months"),
+        ("ytd", f"Year to Date ({current_year})"),
+    ]
+    # Add previous years
+    for year in range(current_year, current_year - 5, -1):
+        range_options.append((str(year), str(year)))
+
+    # Calculate date range based on selection
+    if selected_range == "ytd":
+        first_day = date(current_year, 1, 1)
+        last_day = today
+    elif selected_range == "12":
+        # Last 12 months
+        first_day = date(today.year - 1, today.month, 1)
+        last_day = date(today.year, today.month, monthrange(today.year, today.month)[1])
+    else:
+        # Specific year
+        try:
+            year = int(selected_range)
+            first_day = date(year, 1, 1)
+            last_day = date(year, 12, 31)
+        except (ValueError, TypeError):
+            # Fallback to last 12 months
+            first_day = date(today.year - 1, today.month, 1)
+            last_day = date(today.year, today.month, monthrange(today.year, today.month)[1])
+
+    # Generate month buckets within the date range
     def add_months(d: date, delta_months: int) -> date:
         y = d.year + (d.month - 1 + delta_months) // 12
         m = (d.month - 1 + delta_months) % 12 + 1
         return date(y, m, 1)
 
     month_starts = []
-
-    if range_key in ("3", "6", "12"):
-        n = int(range_key)
-        start = add_months(anchor_month_start, -(n - 1))
-        cur = start
-        while cur <= anchor_month_start:
-            month_starts.append(cur)
-            cur = add_months(cur, 1)
-
-    elif range_key == "ytd":
-        start = date(anchor_month_start.year, 1, 1)
-        cur = start
-        while cur <= anchor_month_start:
-            month_starts.append(cur)
-            cur = add_months(cur, 1)
-
-    elif range_key == "prev_year":
-        prev_year = anchor_month_start.year - 1
-        cur = date(prev_year, 1, 1)
-        end = date(prev_year, 12, 1)
-        while cur <= end:
-            month_starts.append(cur)
-            cur = add_months(cur, 1)
-
-    elif range_key == "all":
-        earliest = (
-            Expense.objects.filter(category=category)
-            .order_by("date")
-            .values_list("date", flat=True)
-            .first()
-        )
-        start = date(earliest.year, earliest.month, 1) if earliest else anchor_month_start
-
-        cur = start
-        while cur <= anchor_month_start:
-            month_starts.append(cur)
-            cur = add_months(cur, 1)
-
-    else:
-        start = add_months(anchor_month_start, -5)
-        cur = start
-        while cur <= anchor_month_start:
-            month_starts.append(cur)
-            cur = add_months(cur, 1)
-
-    month_starts = list(reversed(month_starts))
+    cur = date(first_day.year, first_day.month, 1)
+    end_month = date(last_day.year, last_day.month, 1)
+    while cur <= end_month:
+        month_starts.append(cur)
+        cur = add_months(cur, 1)
 
     monthly_limit = category.monthly_limit or Decimal("0.00")
     has_limit = category.monthly_limit is not None and category.monthly_limit > 0
@@ -621,19 +891,9 @@ def category_expense_list(request, category_name):
 
     range_total = sum((r["total"] for r in month_rows), Decimal("0.00"))
 
-    range_options = [
-        ("3", "Last 3 months"),
-        ("6", "Last 6 months"),
-        ("12", "Last 12 months"),
-        ("ytd", "Year to date"),
-        ("prev_year", "Previous year"),
-        ("all", "All time"),
-    ]
-
     context = {
         "category": category,
-        "selected_month": f"{year:04d}-{month:02d}",
-        "selected_range": range_key,
+        "selected_range": selected_range,
         "range_options": range_options,
         "has_limit": has_limit,
         "monthly_limit": monthly_limit,
@@ -645,70 +905,52 @@ def category_expense_list(request, category_name):
     return render(request, "category_expense_list.html", context)
 
 def income_category_income_list(request, pk):
-    selected_month_str = request.GET.get("month")
-    range_key = request.GET.get("range", "6")
     today = date.today()
-
-    try:
-        year, month = map(int, (selected_month_str or "").split("-"))
-    except Exception:
-        year, month = today.year, today.month
+    selected_range = request.GET.get("range", "12")  # Default: Last 12 months
 
     inc_cat = get_object_or_404(IncomeCategory, pk=pk)
-    anchor_month_start = date(year, month, 1)
 
+    # Build range options
+    current_year = today.year
+    range_options = [
+        ("12", "Last 12 months"),
+        ("ytd", f"Year to Date ({current_year})"),
+    ]
+    # Add previous years
+    for year in range(current_year, current_year - 5, -1):
+        range_options.append((str(year), str(year)))
+
+    # Calculate date range based on selection
+    if selected_range == "ytd":
+        first_day = date(current_year, 1, 1)
+        last_day = today
+    elif selected_range == "12":
+        # Last 12 months
+        first_day = date(today.year - 1, today.month, 1)
+        last_day = date(today.year, today.month, monthrange(today.year, today.month)[1])
+    else:
+        # Specific year
+        try:
+            year = int(selected_range)
+            first_day = date(year, 1, 1)
+            last_day = date(year, 12, 31)
+        except (ValueError, TypeError):
+            # Fallback to last 12 months
+            first_day = date(today.year - 1, today.month, 1)
+            last_day = date(today.year, today.month, monthrange(today.year, today.month)[1])
+
+    # Generate month buckets within the date range
     def add_months(d: date, delta_months: int) -> date:
         y = d.year + (d.month - 1 + delta_months) // 12
         m = (d.month - 1 + delta_months) % 12 + 1
         return date(y, m, 1)
 
     month_starts = []
-
-    if range_key in ("3", "6", "12"):
-        n = int(range_key)
-        start = add_months(anchor_month_start, -(n - 1))
-        cur = start
-        while cur <= anchor_month_start:
-            month_starts.append(cur)
-            cur = add_months(cur, 1)
-
-    elif range_key == "ytd":
-        start = date(anchor_month_start.year, 1, 1)
-        cur = start
-        while cur <= anchor_month_start:
-            month_starts.append(cur)
-            cur = add_months(cur, 1)
-
-    elif range_key == "prev_year":
-        prev_year = anchor_month_start.year - 1
-        cur = date(prev_year, 1, 1)
-        end = date(prev_year, 12, 1)
-        while cur <= end:
-            month_starts.append(cur)
-            cur = add_months(cur, 1)
-
-    elif range_key == "all":
-        earliest = (
-            Income.objects.filter(income_category=inc_cat)
-            .order_by("date")
-            .values_list("date", flat=True)
-            .first()
-        )
-        start = date(earliest.year, earliest.month, 1) if earliest else anchor_month_start
-
-        cur = start
-        while cur <= anchor_month_start:
-            month_starts.append(cur)
-            cur = add_months(cur, 1)
-
-    else:
-        start = add_months(anchor_month_start, -5)
-        cur = start
-        while cur <= anchor_month_start:
-            month_starts.append(cur)
-            cur = add_months(cur, 1)
-
-    month_starts = list(reversed(month_starts))
+    cur = date(first_day.year, first_day.month, 1)
+    end_month = date(last_day.year, last_day.month, 1)
+    while cur <= end_month:
+        month_starts.append(cur)
+        cur = add_months(cur, 1)
 
     target = inc_cat.monthly_target or Decimal("0.00")
 
@@ -746,19 +988,9 @@ def income_category_income_list(request, pk):
 
     range_total = sum((r["total"] for r in month_rows), Decimal("0.00"))
 
-    range_options = [
-        ("3", "Last 3 months"),
-        ("6", "Last 6 months"),
-        ("12", "Last 12 months"),
-        ("ytd", "Year to date"),
-        ("prev_year", "Previous year"),
-        ("all", "All time"),
-    ]
-
     context = {
         "income_category": inc_cat,
-        "selected_month": f"{year:04d}-{month:02d}",
-        "selected_range": range_key,
+        "selected_range": selected_range,
         "range_options": range_options,
         "has_target": target > 0,
         "monthly_target": target,
@@ -776,60 +1008,33 @@ def income_category_income_list(request, pk):
 def rental_properties(request):
     """
     Owned properties overview:
-      - income / expenses / net over a selected range
+      - income / expenses / net over a selected year
       - mortgage summary (if configured)
       - equity, if an estimated value is set
     """
-    selected_month_str = request.GET.get("month")
-    range_key = request.GET.get("range", "6")
+    year_param = request.GET.get("year")
     today = date.today()
 
-    try:
-        year, month = map(int, (selected_month_str or "").split("-"))
-    except Exception:
-        year, month = today.year, today.month
-        selected_month_str = f"{year:04d}-{month:02d}"
-
-    anchor_month_start = date(year, month, 1)
-
-    def add_months(d: date, delta_months: int) -> date:
-        y = d.year + (d.month - 1 + delta_months) // 12
-        m = (d.month - 1 + delta_months) % 12 + 1
-        return date(y, m, 1)
-
-    # Determine range_start and range_end (inclusive)
-    if range_key in ("3", "6", "12"):
-        n = int(range_key)
-        start_month = add_months(anchor_month_start, -(n - 1))
-        range_start = start_month
-        range_end = date(year, month, monthrange(year, month)[1])
-    elif range_key == "ytd":
-        range_start = date(year, 1, 1)
-        range_end = date(year, month, monthrange(year, month)[1])
-    elif range_key == "prev_year":
-        prev_year = year - 1
-        range_start = date(prev_year, 1, 1)
-        range_end = date(prev_year, 12, 31)
-    elif range_key == "all":
-        earliest_income = (
-            Income.objects.order_by("date").values_list("date", flat=True).first()
-        )
-        earliest_expense = (
-            Expense.objects.order_by("date").values_list("date", flat=True).first()
-        )
-        earliest = earliest_income or earliest_expense
-        if earliest_income and earliest_expense:
-            earliest = min(earliest_income, earliest_expense)
-        if earliest:
-            range_start = date(earliest.year, earliest.month, 1)
-        else:
-            range_start = anchor_month_start
-        range_end = date(year, month, monthrange(year, month)[1])
+    # Parse year or default to current year
+    if year_param:
+        try:
+            selected_year = int(year_param)
+        except (ValueError, TypeError):
+            selected_year = today.year
     else:
-        # default last 6 months
-        start_month = add_months(anchor_month_start, -5)
-        range_start = start_month
-        range_end = date(year, month, monthrange(year, month)[1])
+        selected_year = today.year
+
+    # Determine if YTD or full year
+    is_ytd = (year_param == "ytd" or selected_year == today.year)
+
+    if is_ytd and selected_year == today.year:
+        range_start = date(today.year, 1, 1)
+        range_end = today
+        period_label = f"YTD {today.year}"
+    else:
+        range_start = date(selected_year, 1, 1)
+        range_end = date(selected_year, 12, 31)
+        period_label = str(selected_year)
 
     properties = RentalProperty.objects.filter(is_active=True).order_by("name")
 
@@ -874,22 +1079,19 @@ def rental_properties(request):
             "net_total": net_total,
         })
 
-    range_options = [
-        ("3", "Last 3 months"),
-        ("6", "Last 6 months"),
-        ("12", "Last 12 months"),
-        ("ytd", "Year to date"),
-        ("prev_year", "Previous year"),
-        ("all", "All time"),
-    ]
+    # Generate year options (current year + 5 years back)
+    year_options = []
+    year_options.append(("ytd", f"YTD {today.year}"))
+    for y in range(today.year, today.year - 6, -1):
+        year_options.append((str(y), str(y)))
 
     context = {
         "rows": rows,
-        "selected_month": f"{year:04d}-{month:02d}",
-        "selected_range": range_key,
-        "range_options": range_options,
+        "selected_year": year_param if year_param else "ytd",
+        "year_options": year_options,
         "range_start": range_start,
         "range_end": range_end,
+        "period_label": period_label,
     }
     return render(request, "rental_properties.html", context)
 
@@ -1503,21 +1705,30 @@ def rental_tax_category_detail(request, property_id, cra_category_id):
 class CategoryForm(ModelForm):
     class Meta:
         model = Category
-        fields = ["name", "monthly_limit", "savings_target_per_paycheque"]
+        fields = ["name", "monthly_limit"]
 
 class CategoryForm(ModelForm):
     class Meta:
         model = Category
-        fields = ["name", "monthly_limit", "savings_target_per_paycheque"]
+        fields = ["name", "monthly_limit"]
 
 class IncomeCategoryForm(ModelForm):
     class Meta:
         model = IncomeCategory
         fields = ["name", "monthly_target", "taxable_default"]
 
+class WithholdingCategoryForm(ModelForm):
+    class Meta:
+        model = WithholdingCategory
+        fields = ["name", "account", "monthly_target", "target_amount", "next_due_date"]
+        widgets = {
+            "next_due_date": forms.DateInput(attrs={"type": "date"}),
+        }
+
 def category_list(request):
     expense_categories = Category.objects.all().order_by("name")
     income_categories = IncomeCategory.objects.all().order_by("name")
+    withholding_categories = WithholdingCategory.objects.select_related("account").all().order_by("name")
 
     if request.method == "POST":
         action = request.POST.get("action")
@@ -1560,14 +1771,36 @@ def category_list(request):
             else:
                 messages.error(request, "Please correct the errors in the income category form.")
 
+        if action == "withholding_delete":
+            wh = get_object_or_404(WithholdingCategory, pk=request.POST.get("id"))
+            wh.delete()
+            return redirect("category_list")
+
+        if action == "withholding_save":
+            withholding_id = request.POST.get("id") or ""
+            instance = get_object_or_404(WithholdingCategory, pk=withholding_id) if withholding_id else None
+            form = WithholdingCategoryForm(request.POST, instance=instance)
+
+            if form.is_valid():
+                try:
+                    form.save()
+                    return redirect("category_list")
+                except IntegrityError:
+                    messages.error(request, "A withholding category with that name already exists.")
+            else:
+                messages.error(request, "Please correct the errors in the withholding category form.")
+
     expense_form = CategoryForm()
     income_form = IncomeCategoryForm()
+    withholding_form = WithholdingCategoryForm()
 
     return render(request, "category_list.html", {
         "expense_categories": expense_categories,
         "income_categories": income_categories,
+        "withholding_categories": withholding_categories,
         "expense_form": expense_form,
         "income_form": income_form,
+        "withholding_form": withholding_form,
     })
 
 class BankAccountForm(ModelForm):
@@ -1608,6 +1841,781 @@ def bank_accounts(request):
         form = BankAccountForm()
 
     return render(request, "bank_accounts.html", {"accounts": accounts, "form": form})
+
+def bank_account_detail(request, account_id):
+    """
+    Per-account ledger view.
+
+    Shows, for a given BankAccount in the selected month:
+      - All incomes into this account
+      - All expenses out of this account
+      - All transfers where this account is either the source or destination
+    """
+    account = get_object_or_404(BankAccount, pk=account_id)
+
+    # --- Month selection (same pattern as dashboard / withholdings) ---
+    today = date.today()
+    selected_month_str = request.GET.get("month", today.strftime("%Y-%m"))
+
+    try:
+        year, month = map(int, selected_month_str.split("-"))
+    except ValueError:
+        year, month = today.year, today.month
+
+    first_day = date(year, month, 1)
+    last_day = date(year, month, monthrange(year, month)[1])
+    selected_month_display = first_day.strftime("%B %Y")
+
+    # --- Pull incomes and expenses for this account & month ---
+    income_qs = (
+        account.incomes.filter(date__range=(first_day, last_day))
+        .select_related("income_category", "rental_unit")
+        .order_by("date", "id")
+    )
+
+    expense_qs = (
+        account.expenses.filter(date__range=(first_day, last_day))
+        .select_related("category", "rental_unit")
+        .order_by("date", "id")
+    )
+
+    # --- Pull transfers involving this account & month ---
+    incoming_transfers = (
+        account.incoming_transfers.filter(date__range=(first_day, last_day))
+        .select_related("from_account", "to_account", "withholding_category")
+        .order_by("date", "id")
+    )
+
+    outgoing_transfers = (
+        account.outgoing_transfers.filter(date__range=(first_day, last_day))
+        .select_related("from_account", "to_account", "withholding_category")
+        .order_by("date", "id")
+    )
+
+    # --- Normalize to a single list of ledger entries ---
+    entries = []
+
+    # Incomes (inflows)
+    for inc in income_qs:
+        desc = ""
+        if inc.income_category:
+            desc = inc.income_category.name
+        elif inc.category:
+            desc = inc.category
+        else:
+            desc = "Income"
+
+        if inc.rental_unit:
+            desc = f"{desc} – {inc.rental_unit.property.name} / {inc.rental_unit.name}"
+
+        entries.append(
+            {
+                "date": inc.date,
+                "kind": "income",
+                "is_inflow": True,
+                "raw_amount": inc.amount,
+                "signed_amount": inc.amount,  # inflow = +amount
+                "description": desc,
+                "notes": inc.notes,
+                "income_id": inc.id,
+                "expense_id": None,
+                "transfer_id": None,
+            }
+        )
+
+    # Expenses (outflows)
+    for exp in expense_qs:
+        desc = exp.vendor_name or ""
+        if exp.category:
+            if desc:
+                desc = f"{desc} – {exp.category.name}"
+            else:
+                desc = exp.category.name
+
+        if exp.rental_unit:
+            tail = f"{exp.rental_unit.property.name} / {exp.rental_unit.name}"
+            desc = f"{desc} ({tail})" if desc else tail
+
+        entries.append(
+            {
+                "date": exp.date,
+                "kind": "expense",
+                "is_inflow": False,
+                "raw_amount": exp.amount,
+                "signed_amount": -exp.amount,  # outflow = -amount
+                "description": desc or "Expense",
+                "notes": exp.notes,
+                "income_id": None,
+                "expense_id": exp.id,
+                "transfer_id": None,
+            }
+        )
+
+    # Transfers where this account is the *destination* (inflows)
+    for tr in incoming_transfers:
+        # If someone ever recorded from_account == to_account == this account, skip (no net effect)
+        if tr.from_account_id == account.id and tr.to_account_id == account.id:
+            continue
+
+        counterparty = tr.from_account or None
+        base_desc = tr.description or "Transfer in"
+
+        if counterparty:
+            desc = f"{base_desc} (from {counterparty})"
+        else:
+            desc = f"{base_desc} (from external)"
+
+        if tr.withholding_category:
+            desc = f"{desc} [Bucket: {tr.withholding_category.name}]"
+
+        entries.append(
+            {
+                "date": tr.date,
+                "kind": "transfer",
+                "is_inflow": True,
+                "raw_amount": tr.amount,
+                "signed_amount": tr.amount,  # inflow = +amount
+                "description": desc,
+                "notes": tr.notes,
+                "income_id": None,
+                "expense_id": None,
+                "transfer_id": tr.id,
+            }
+        )
+
+    # Transfers where this account is the *source* (outflows)
+    for tr in outgoing_transfers:
+        # If someone ever recorded from_account == to_account == this account, skip (no net effect)
+        if tr.from_account_id == account.id and tr.to_account_id == account.id:
+            continue
+
+        counterparty = tr.to_account or None
+        base_desc = tr.description or "Transfer out"
+
+        if counterparty:
+            desc = f"{base_desc} (to {counterparty})"
+        else:
+            desc = f"{base_desc} (to external)"
+
+        if tr.withholding_category:
+            desc = f"{desc} [Bucket: {tr.withholding_category.name}]"
+
+        entries.append(
+            {
+                "date": tr.date,
+                "kind": "transfer",
+                "is_inflow": False,
+                "raw_amount": tr.amount,
+                "signed_amount": -tr.amount,  # outflow = -amount
+                "description": desc,
+                "notes": tr.notes,
+                "income_id": None,
+                "expense_id": None,
+                "transfer_id": tr.id,
+            }
+        )
+
+    # Sort chronologically; within a day, group income, then transfers, then expenses
+    def sort_key(e):
+        kind_order = {"income": 0, "transfer": 1, "expense": 2}
+        return (e["date"], kind_order.get(e["kind"], 99))
+
+    entries.sort(key=sort_key)
+
+    # --- Summaries ---
+    total_inflow = sum(e["raw_amount"] for e in entries if e["is_inflow"])
+    total_outflow = sum(e["raw_amount"] for e in entries if not e["is_inflow"])
+    net_change = sum(e["signed_amount"] for e in entries)
+
+    # Ensure Decimals for template math/formatting
+    total_inflow = total_inflow or Decimal("0.00")
+    total_outflow = total_outflow or Decimal("0.00")
+    net_change = net_change or Decimal("0.00")
+
+    context = {
+        "account": account,
+        "entries": entries,
+        "selected_month": f"{year:04d}-{month:02d}",
+        "selected_month_display": selected_month_display,
+        "total_inflow": total_inflow,
+        "total_outflow": total_outflow,
+        "net_change": net_change,
+    }
+
+    return render(request, "bank_account_detail.html", context)
+
+@require_http_methods(["GET", "POST"])
+def unassigned_transactions(request):
+    """
+    Helper page (not linked in main UI) to clean up:
+      - Income/Expense rows missing a bank_account
+      - Historical reclassification of some expenses as transfers
+      - Withholding bucket assignment on transfers
+      - Targeted Foxview Insurance cleanup.
+
+    IMPORTANT: We never change rows that already have a bank_account or bucket
+    except where explicitly requested by these helper actions.
+    """
+    accounts = BankAccount.objects.all().order_by("name")
+
+    def build_unassigned_context(extra=None):
+        incomes = (
+            Income.objects
+            .filter(bank_account__isnull=True)
+            .order_by("-date", "-id")
+        )
+        expenses = (
+            Expense.objects
+            .filter(bank_account__isnull=True)
+            .select_related("category")
+            .order_by("-date", "-id")
+        )
+        ctx = {
+            "incomes": incomes,
+            "expenses": expenses,
+            "accounts": accounts,
+        }
+        if extra:
+            ctx.update(extra)
+        return ctx
+
+    if request.method == "POST":
+
+        # --------------------------------------------------
+        # 1) Auto-assign bank accounts using rules
+        # --------------------------------------------------
+        if "auto_assign" in request.POST:
+            td_chequings = BankAccount.objects.filter(
+                name__iexact="TD CHEQUINGS"
+            ).first()
+            td_aeroplan_visa = BankAccount.objects.filter(
+                name__iexact="TD AEROPLAN VISA"
+            ).first()
+
+            if not td_chequings:
+                messages.error(
+                    request,
+                    "Auto-assign: No bank account found with name 'TD CHEQUINGS' "
+                    "(case-insensitive). Please create or rename it, then try again.",
+                )
+            if not td_aeroplan_visa:
+                messages.error(
+                    request,
+                    "Auto-assign: No bank account found with name 'TD AEROPLAN VISA' "
+                    "(case-insensitive). Please create or rename it, then try again.",
+                )
+
+            assigned_incomes = 0
+            assigned_expenses = 0
+
+            # Income rule: all unassigned incomes → TD CHEQUINGS
+            if td_chequings:
+                for inc in Income.objects.filter(bank_account__isnull=True):
+                    inc.bank_account = td_chequings
+                    inc.save(update_fields=["bank_account"])
+                    assigned_incomes += 1
+
+            # Expense rules
+            # These categories are handled by the transfer reclassification step, so skip here.
+            skip_cat_keys = {
+                "arnprior property tax",
+                "rrsp contributions",
+                "foxview down payment savings",
+                "arnprior rental tax withholding (loft)",
+                "arnprior rental tax withholding (main)",
+            }
+
+            chequings_cat_keys = {
+                "arnprior insurance",
+                "foxview property tax",
+                "arnprior snow removal",
+                "arnprior mortgage interest",
+                "arnprior mortgage principal",
+                "foxview hydro",
+                "foxview insurance",
+                "foxview internet",
+                "arnprior hydro",
+            }
+
+            aeroplan_visa_cat_keys = {
+                "gas",
+                "business expense",
+                "miscellaneous",
+            }
+
+            expense_qs = (
+                Expense.objects
+                .filter(bank_account__isnull=True)
+                .select_related("category")
+            )
+
+            for exp in expense_qs:
+                if not exp.category_id:
+                    continue
+
+                cat_name = (exp.category.name or "").strip()
+                cat_key = cat_name.lower()
+                vendor = (exp.vendor_name or "").strip()
+                vendor_lower = vendor.lower()
+
+                # Skip anything that will be covered by the transfer reclassification step
+                if cat_key in skip_cat_keys:
+                    continue
+
+                target_account = None
+
+                # Groceries rule:
+                # - Groceries are on TD AEROPLAN VISA
+                # - unless vendor is Costco → TD CHEQUINGS
+                if cat_key == "groceries":
+                    if "costco" in vendor_lower and td_chequings:
+                        target_account = td_chequings
+                    elif td_aeroplan_visa:
+                        target_account = td_aeroplan_visa
+
+                elif cat_key in chequings_cat_keys and td_chequings:
+                    target_account = td_chequings
+
+                elif cat_key in aeroplan_visa_cat_keys and td_aeroplan_visa:
+                    target_account = td_aeroplan_visa
+
+                if not target_account:
+                    continue
+
+                exp.bank_account = target_account
+                exp.save(update_fields=["bank_account"])
+                assigned_expenses += 1
+
+            if assigned_incomes or assigned_expenses:
+                messages.success(
+                    request,
+                    f"Auto-assign complete: set bank accounts for "
+                    f"{assigned_incomes} income(s) and {assigned_expenses} expense(s). "
+                    f"Transactions already linked to an account were not changed.",
+                )
+            else:
+                messages.info(
+                    request,
+                    "Auto-assign finished but did not change any rows. "
+                    "Either there were no unassigned transactions, or account names/rules did not match.",
+                )
+
+            return redirect("unassigned_transactions")
+
+        # --------------------------------------------------
+        # 2) Reclassify some expenses as transfers + fix others
+        # --------------------------------------------------
+        if "reclassify_transfers" in request.POST:
+            td_chequings = BankAccount.objects.filter(
+                name__iexact="TD CHEQUINGS"
+            ).first()
+            td_visa = BankAccount.objects.filter(
+                name__iexact="TD AEROPLAN VISA"
+            ).first()
+            ws_cash = BankAccount.objects.filter(
+                name__iexact="Wealthsimple Cash"
+            ).first()
+            ws_rrsp = BankAccount.objects.filter(
+                name__iexact="Wealthsimple RRSP"
+            ).first()
+
+            missing = []
+            if not td_chequings:
+                missing.append("TD CHEQUINGS")
+            if not ws_cash:
+                missing.append("Wealthsimple Cash")
+            if not ws_rrsp:
+                missing.append("Wealthsimple RRSP")
+            if not td_visa:
+                missing.append("TD AEROPLAN VISA")
+
+            if missing:
+                messages.error(
+                    request,
+                    "Reclassify: Could not find required account(s) "
+                    + ", ".join(f"'{m}'" for m in missing)
+                    + " (case-insensitive). Please create/rename them and try again.",
+                )
+                return redirect("unassigned_transactions")
+
+            created_transfers = 0
+            assigned_chequings = 0
+            assigned_visa = 0
+
+            THRESHOLD = Decimal("550.00")
+
+            expenses = (
+                Expense.objects
+                .filter(bank_account__isnull=True)
+                .select_related("category")
+            )
+
+            for exp in expenses:
+                if not exp.category:
+                    continue
+
+                cat_name = (exp.category.name or "").strip()
+                cat_key = cat_name.lower()
+                amt = exp.amount
+
+                def make_transfer(to_account):
+                    nonlocal created_transfers
+                    Transfer.objects.create(
+                        date=exp.date,
+                        amount=amt,
+                        from_account=td_chequings,
+                        to_account=to_account,
+                        description=f"Reclassified from expense: {cat_name}",
+                        notes=exp.notes or exp.vendor_name or "",
+                        # withholding_category will be added later by the helper actions
+                    )
+                    exp.delete()
+                    created_transfers += 1
+
+                # ----------------
+                # TRANSFER RULES
+                # ----------------
+
+                # 1) Arnprior Property Tax – thresholded
+                if cat_key == "arnprior property tax":
+                    if amt <= THRESHOLD:
+                        make_transfer(ws_cash)
+                    # > 550 → leave unassigned for manual review
+                    continue
+
+                # 2) RRSP Contributions – always Chequings → WS RRSP
+                if cat_key == "rrsp contributions":
+                    make_transfer(ws_rrsp)
+                    continue
+
+                # 3) Foxview Insurance exactly 250 → transfer Chequings → WS Cash
+                if cat_key == "foxview insurance":
+                    if amt == Decimal("250.00"):
+                        make_transfer(ws_cash)
+                    # other amounts stay for manual handling / other tools
+                    continue
+
+                # 4/5/6) Foxview Down Payment Savings, Arnprior Rental Tax Withholding (LOFT/MAIN)
+                #        – always Chequings → WS Cash (no threshold)
+                if cat_key in {
+                    "foxview down payment savings",
+                    "arnprior rental tax withholding (loft)",
+                    "arnprior rental tax withholding (main)",
+                }:
+                    make_transfer(ws_cash)
+                    continue
+
+                # ----------------
+                # REMAIN AS EXPENSE (assign account)
+                # ----------------
+
+                # Chequings expenses
+                if cat_key in {
+                    "arnprior snow removal",
+                    "foxview property tax",
+                    "subaru insurance",
+                    "arnprior heat",
+                    "foxview internet",
+                }:
+                    exp.bank_account = td_chequings
+                    exp.save(update_fields=["bank_account"])
+                    assigned_chequings += 1
+                    continue
+
+                # Visa expenses
+                if cat_key in {
+                    "cell phone",
+                    "arnprior internet",
+                    "foxview heat",
+                    "digital subscriptions",
+                    "restaurants",
+                }:
+                    exp.bank_account = td_visa
+                    exp.save(update_fields=["bank_account"])
+                    assigned_visa += 1
+                    continue
+
+            messages.success(
+                request,
+                "Reclassification complete: "
+                f"{created_transfers} transfer(s) created, "
+                f"{assigned_chequings} expense(s) assigned to TD CHEQUINGS, "
+                f"{assigned_visa} expense(s) assigned to TD AEROPLAN VISA."
+            )
+            return redirect("unassigned_transactions")
+
+        # --------------------------------------------------
+        # 3a) PREVIEW: Attach withholding buckets to reclassified transfers
+        # --------------------------------------------------
+        if "assign_transfer_buckets_preview" in request.POST:
+            # Buckets: use your exact WithholdingCategory names
+            bucket_arnprior_prop = WithholdingCategory.objects.filter(
+                name__iexact="Arnprior Property Tax"
+            ).first()
+            bucket_arnprior_rental = WithholdingCategory.objects.filter(
+                name__iexact="Arnprior Rental Income Tax"
+            ).first()
+            bucket_foxview_ins = WithholdingCategory.objects.filter(
+                name__iexact="Foxview Insurance"
+            ).first()
+
+            missing_buckets = []
+            if not bucket_arnprior_prop:
+                missing_buckets.append("Arnprior Property Tax")
+            if not bucket_arnprior_rental:
+                missing_buckets.append("Arnprior Rental Income Tax")
+            if not bucket_foxview_ins:
+                missing_buckets.append("Foxview Insurance")
+
+            if missing_buckets:
+                messages.error(
+                    request,
+                    "Assign buckets: Could not find required withholding bucket(s) "
+                    + ", ".join(f"'{b}'" for b in missing_buckets)
+                    + ". Please create/rename them and try again.",
+                )
+                return redirect("unassigned_transactions")
+
+            transfers = Transfer.objects.filter(
+                withholding_category__isnull=True,
+                description__startswith="Reclassified from expense:",
+            ).order_by("date", "id")
+
+            preview_rows = []
+            for t in transfers:
+                desc = t.description or ""
+                proposed_bucket = None
+                rule = ""
+
+                if "Arnprior Property Tax" in desc:
+                    proposed_bucket = bucket_arnprior_prop
+                    rule = "Arnprior Property Tax → Arnprior Property Tax bucket"
+                elif "Arnprior Rental Tax Withholding (MAIN)" in desc or "Arnprior Rental Tax Withholding (LOFT)" in desc:
+                    proposed_bucket = bucket_arnprior_rental
+                    rule = "Rental Tax Withholding (MAIN/LOFT) → Arnprior Rental Income Tax bucket"
+                elif "Foxview Insurance" in desc:
+                    proposed_bucket = bucket_foxview_ins
+                    rule = "Foxview Insurance → Foxview Insurance bucket"
+                else:
+                    rule = "No matching rule (will be skipped)"
+
+                preview_rows.append(
+                    {
+                        "transfer": t,
+                        "proposed_bucket": proposed_bucket,
+                        "rule": rule,
+                        "will_change": proposed_bucket is not None,
+                    }
+                )
+
+            context = build_unassigned_context(
+                {"bucket_preview": preview_rows}
+            )
+            return render(request, "unassigned_transactions.html", context)
+
+        # --------------------------------------------------
+        # 3b) APPLY: Attach withholding buckets to reclassified transfers
+        # --------------------------------------------------
+        if "assign_transfer_buckets_apply" in request.POST:
+            bucket_arnprior_prop = WithholdingCategory.objects.filter(
+                name__iexact="Arnprior Property Tax"
+            ).first()
+            bucket_arnprior_rental = WithholdingCategory.objects.filter(
+                name__iexact="Arnprior Rental Income Tax"
+            ).first()
+            bucket_foxview_ins = WithholdingCategory.objects.filter(
+                name__iexact="Foxview Insurance"
+            ).first()
+
+            missing_buckets = []
+            if not bucket_arnprior_prop:
+                missing_buckets.append("Arnprior Property Tax")
+            if not bucket_arnprior_rental:
+                missing_buckets.append("Arnprior Rental Income Tax")
+            if not bucket_foxview_ins:
+                missing_buckets.append("Foxview Insurance")
+
+            if missing_buckets:
+                messages.error(
+                    request,
+                    "Assign buckets: Could not find required withholding bucket(s) "
+                    + ", ".join(f"'{b}'" for b in missing_buckets)
+                    + ". Please create/rename them and try again.",
+                )
+                return redirect("unassigned_transactions")
+
+            updated = 0
+            skipped = 0
+
+            transfers = Transfer.objects.filter(
+                withholding_category__isnull=True,
+                description__startswith="Reclassified from expense:",
+            )
+
+            for t in transfers:
+                desc = t.description or ""
+                if "Arnprior Property Tax" in desc and bucket_arnprior_prop:
+                    t.withholding_category = bucket_arnprior_prop
+                elif ("Arnprior Rental Tax Withholding (MAIN)" in desc or
+                      "Arnprior Rental Tax Withholding (LOFT)" in desc):
+                    if bucket_arnprior_rental:
+                        t.withholding_category = bucket_arnprior_rental
+                    else:
+                        skipped += 1
+                        continue
+                elif "Foxview Insurance" in desc and bucket_foxview_ins:
+                    t.withholding_category = bucket_foxview_ins
+                else:
+                    skipped += 1
+                    continue
+
+                t.save(update_fields=["withholding_category"])
+                updated += 1
+
+            messages.success(
+                request,
+                f"Assigned withholding buckets to {updated} transfer(s). "
+                f"Skipped {skipped} transfer(s) that did not match a known rule.",
+            )
+            return redirect("unassigned_transactions")
+
+        # --------------------------------------------------
+        # 4) Foxview Insurance cleanup:
+        #    - convert 250/500 expenses into transfers
+        #    - create missing real expenses from legacy payouts
+        # --------------------------------------------------
+        if "fix_foxview_insurance" in request.POST:
+            td_chequings = BankAccount.objects.filter(
+                name__iexact="TD CHEQUINGS"
+            ).first()
+            ws_cash = BankAccount.objects.filter(
+                name__iexact="Wealthsimple Cash"
+            ).first()
+            foxview_cat = Category.objects.filter(
+                name__iexact="Foxview Insurance"
+            ).first()
+            foxview_bucket = WithholdingCategory.objects.filter(
+                name__iexact="Foxview Insurance"
+            ).first()
+
+            missing = []
+            if not td_chequings:
+                missing.append("TD CHEQUINGS")
+            if not ws_cash:
+                missing.append("Wealthsimple Cash")
+            if not foxview_cat:
+                missing.append("Foxview Insurance (expense category)")
+            if not foxview_bucket:
+                missing.append("Foxview Insurance (withholding bucket)")
+
+            if missing:
+                messages.error(
+                    request,
+                    "Foxview Insurance cleanup: Missing required objects: "
+                    + ", ".join(f"'{m}'" for m in missing)
+                    + ". Please create/rename them and try again.",
+                )
+                return redirect("unassigned_transactions")
+
+            # 4a) Convert contribution expenses (250 / 500) into transfers
+            from django.db.models import Q
+
+            contrib_qs = Expense.objects.filter(
+                category=foxview_cat,
+                bank_account=td_chequings,
+            ).filter(
+                Q(amount=Decimal("250.00")) | Q(amount=Decimal("500.00"))
+            )
+
+            converted = 0
+            for exp in contrib_qs:
+                Transfer.objects.create(
+                    date=exp.date,
+                    amount=exp.amount,
+                    from_account=td_chequings,
+                    to_account=ws_cash,
+                    description=exp.vendor_name or "Foxview Insurance transfer",
+                    notes=(exp.notes or "").strip() or f"Reclassified from expense id {exp.id}",
+                    withholding_category=foxview_bucket,
+                )
+                exp.delete()
+                converted += 1
+
+            # 4b) Create missing real expenses from legacy payouts (negative ledger entries)
+            created_expenses = 0
+            if foxview_bucket:
+                payout_txs = foxview_bucket.transactions.filter(amount__lt=0)
+
+                for tx in payout_txs:
+                    amt = -tx.amount  # make positive
+                    exists = Expense.objects.filter(
+                        category=foxview_cat,
+                        amount=amt,
+                        date=tx.date,
+                        withholding_category=foxview_bucket,
+                    ).exists()
+                    if exists:
+                        continue
+
+                    Expense.objects.create(
+                        date=tx.date,
+                        vendor_name=tx.note or "Foxview Insurance bill",
+                        category=foxview_cat,
+                        amount=amt,
+                        bank_account=td_chequings,
+                        location="Ottawa",
+                        withholding_category=foxview_bucket,
+                        notes="Created from Foxview Insurance withholding ledger payout",
+                    )
+                    created_expenses += 1
+
+            messages.success(
+                request,
+                "Foxview Insurance cleanup complete: "
+                f"{converted} contribution expense(s) converted to transfers, "
+                f"{created_expenses} bill expense(s) created from legacy ledger."
+            )
+            return redirect("unassigned_transactions")
+
+        # --------------------------------------------------
+        # 5) Manual single-income assignment
+        # --------------------------------------------------
+        if "assign_income_id" in request.POST:
+            income = get_object_or_404(Income, pk=request.POST["assign_income_id"])
+            bank_account_id = (request.POST.get("bank_account") or "").strip()
+            if not bank_account_id:
+                messages.error(request, "Please choose a bank account before saving this income.")
+            else:
+                income.bank_account = get_object_or_404(BankAccount, pk=bank_account_id)
+                income.save(update_fields=["bank_account"])
+                messages.success(
+                    request,
+                    f"Updated income on {income.date} for ${income.amount} "
+                    f"to use account '{income.bank_account.name}'."
+                )
+            return redirect("unassigned_transactions")
+
+        # --------------------------------------------------
+        # 6) Manual single-expense assignment
+        # --------------------------------------------------
+        if "assign_expense_id" in request.POST:
+            expense = get_object_or_404(Expense, pk=request.POST["assign_expense_id"])
+            bank_account_id = (request.POST.get("bank_account") or "").strip()
+            if not bank_account_id:
+                messages.error(request, "Please choose a bank account before saving this expense.")
+            else:
+                expense.bank_account = get_object_or_404(BankAccount, pk=bank_account_id)
+                expense.save(update_fields=["bank_account"])
+                messages.success(
+                    request,
+                    f"Updated expense on {expense.date} ({expense.vendor_name}) "
+                    f"to use account '{expense.bank_account.name}'."
+                )
+            return redirect("unassigned_transactions")
+
+    # GET (or fallthrough)
+    context = build_unassigned_context()
+    return render(request, "unassigned_transactions.html", context)
 
 def import_batch_detail(request, batch_id):
     batch = get_object_or_404(ImportBatch, pk=batch_id)
@@ -1666,6 +2674,7 @@ def import_transactions(request):
 
         income_cat_cache = {c.name: c for c in IncomeCategory.objects.all()}
         arnprior_shared_unit_id = get_arnprior_shared_unit_id()
+        foxview_shared_unit_id = get_foxview_shared_unit_id()
 
         for row in reader:
             if not row or all(not cell.strip() for cell in row):
@@ -1741,10 +2750,16 @@ def import_transactions(request):
                 hydro_candidates.append((len(initial_rows), amount))
 
             expense_rental_unit_id = None
-            if entry_type == "expense" and expense_category and arnprior_shared_unit_id:
-                # Heuristic: any auto-mapped expense category containing "Arnprior" => Arnprior shared/common unit
-                if "ARNPRIOR" in (expense_category.name or "").upper():
-                    expense_rental_unit_id = arnprior_shared_unit_id
+            if entry_type == "expense" and expense_category:
+                category_upper = (expense_category.name or "").upper()
+
+                if "ARNPRIOR" in category_upper:
+                    if arnprior_shared_unit_id:
+                        expense_rental_unit_id = arnprior_shared_unit_id
+
+                elif "FOXVIEW" in category_upper:
+                    if foxview_shared_unit_id:
+                        expense_rental_unit_id = foxview_shared_unit_id
 
             initial_rows.append({
                 "entry_type": entry_type,
@@ -1851,6 +2866,7 @@ def import_transactions(request):
 
         created_expenses = 0
         created_incomes = 0
+        created_transfers = 0
         skipped_duplicates = 0
         created_withholding_transactions = 0
 
@@ -1861,10 +2877,12 @@ def import_transactions(request):
 
         expense_objs = []
         income_objs = []
+        transfer_objs = []
         withholding_txns = []
 
         seen_expense_keys = set()
         seen_income_keys = set()
+        seen_transfer_keys = set()
 
         for form in formset:
             cd = form.cleaned_data
@@ -1880,6 +2898,7 @@ def import_transactions(request):
             location = cd.get("location") or "Ottawa"
             notes = cd.get("notes")
             expense_category = cd.get("expense_category")
+            expense_rental_unit = cd.get("expense_rental_unit")
             income_source = cd.get("income_source")
             income_rental_unit = cd.get("income_rental_unit")
             apply_to_withholding = cd.get("apply_to_withholding")
@@ -1931,6 +2950,7 @@ def import_transactions(request):
                     location=location,
                     notes=notes or "",
                     bank_account=bank_account,
+                    rental_unit=expense_rental_unit,
                 )
                 expense_objs.append(exp)
                 total_expense_amount += amount
@@ -1982,7 +3002,58 @@ def import_transactions(request):
                 total_income_amount += amount
                 created_incomes += 1
 
-        total_transactions = created_expenses + created_incomes
+            elif entry_type == "transfer":
+                from_account = cd.get("from_account")
+                to_account = cd.get("to_account")
+                withholding_category = cd.get("withholding_category")
+
+                # Validation: at least one account (should already be validated by form)
+                if not from_account and not to_account:
+                    continue
+
+                # Create duplicate detection key
+                transfer_key = (
+                    date_val,
+                    from_account.id if from_account else None,
+                    to_account.id if to_account else None,
+                    amount
+                )
+
+                # Check for duplicates in current batch
+                if transfer_key in seen_transfer_keys:
+                    skipped_duplicates += 1
+                    continue
+
+                # Check database for existing transfer
+                transfer_exists = Transfer.objects.filter(
+                    date=date_val,
+                    amount=amount,
+                )
+                if from_account:
+                    transfer_exists = transfer_exists.filter(from_account=from_account)
+                if to_account:
+                    transfer_exists = transfer_exists.filter(to_account=to_account)
+
+                if transfer_exists.exists():
+                    skipped_duplicates += 1
+                    continue
+
+                seen_transfer_keys.add(transfer_key)
+
+                # Create Transfer object
+                transfer = Transfer(
+                    date=date_val,
+                    amount=amount,
+                    description=vendor_name or "",
+                    notes=notes or "",
+                    from_account=from_account,
+                    to_account=to_account,
+                    withholding_category=withholding_category,
+                )
+                transfer_objs.append(transfer)
+                created_transfers += 1
+
+        total_transactions = created_expenses + created_incomes + created_transfers
 
         if total_transactions > 0 and earliest_date and latest_date:
             batch = ImportBatch.objects.create(
@@ -2001,20 +3072,25 @@ def import_transactions(request):
             for inc in income_objs:
                 inc.import_batch = batch
                 inc.save()
+            for transfer in transfer_objs:
+                transfer.import_batch = batch
+                transfer.save()
         else:
             for exp in expense_objs:
                 exp.save()
             for inc in income_objs:
                 inc.save()
+            for transfer in transfer_objs:
+                transfer.save()
 
         for wt in withholding_txns:
             wt.save()
 
-        msg = f"Imported {created_expenses} expenses and {created_incomes} income transactions."
+        msg = f"Imported {created_expenses} expense(s), {created_incomes} income, and {created_transfers} transfer transaction(s)."
         if created_withholding_transactions:
             msg += f" Applied {created_withholding_transactions} withholding bucket adjustment(s)."
         if skipped_duplicates:
-            msg += f" Skipped {skipped_duplicates} duplicate transaction(s)."
+            msg += f" Skipped {skipped_duplicates} duplicate(s)."
         messages.success(request, msg)
 
         return redirect("dashboard")
@@ -2068,61 +3144,388 @@ def update_expense(request):
     return redirect(f"/?month={selected_month}")
 
 def withholding_overview(request):
+    """
+    Overview of withholding accounts and their buckets.
+
+    Balances and monthly activity are fully derived from:
+    - Transfers linked to a withholding bucket
+    - Expenses funded from a withholding bucket
+    """
+    # Determine selected month
+    today = date.today()
+    month_param = (request.GET.get("month") or "").strip()
+    if month_param:
+        try:
+            year, month = map(int, month_param.split("-"))
+            month_start = date(year, month, 1)
+        except ValueError:
+            month_start = date(today.year, today.month, 1)
+    else:
+        month_start = date(today.year, today.month, 1)
+
+    _, last_day = monthrange(month_start.year, month_start.month)
+    month_end = date(month_start.year, month_start.month, last_day)
+
+    selected_month = month_start.strftime("%Y-%m")
+    selected_month_display = month_start.strftime("%B %Y")
+
+    # Get withholding accounts and their buckets
     accounts = (
         BankAccount.objects
         .filter(is_withholding_account=True, is_active=True)
-        .prefetch_related("withholding_categories__transactions")
+        .prefetch_related("withholding_categories")
+        .order_by("name")
     )
 
-    payout_form = WithholdingPayoutForm(request.POST or None)
+    # Collect bucket IDs
+    bucket_ids = []
+    for account in accounts:
+        for bucket in account.withholding_categories.all():
+            if bucket.id is not None:
+                bucket_ids.append(bucket.id)
 
-    if request.method == "POST":
-        if payout_form.is_valid():
-            category = payout_form.cleaned_data["withholding_category"]
-            date_val = payout_form.cleaned_data["date"]
-            amount = payout_form.cleaned_data["amount"]
-            note = payout_form.cleaned_data["note"]
+    if not bucket_ids:
+        return render(
+            request,
+            "withholding_overview.html",
+            {
+                "accounts": accounts,
+                "selected_month": selected_month,
+                "selected_month_display": selected_month_display,
+            },
+        )
 
-            # 🔑 EXACT SAME SEMANTICS AS CSV IMPORT
-            WithholdingTransaction.objects.create(
-                category=category,
-                date=date_val,
-                amount=-amount,  # payout = negative
-                note=note or "",
+    # --- Aggregate all-time and monthly activity per bucket ---
+
+    # Transfers (all-time)
+    transfers_all = (
+        Transfer.objects
+        .filter(withholding_category_id__in=bucket_ids)
+        .values("withholding_category_id")
+        .annotate(
+            in_total=Sum(
+                Case(
+                    When(
+                        to_account_id=F("withholding_category__account_id"),
+                        then=F("amount"),
+                    ),
+                    default=Value(0),
+                    output_field=DecimalField(max_digits=12, decimal_places=2),
+                )
+            ),
+            out_total=Sum(
+                Case(
+                    When(
+                        from_account_id=F("withholding_category__account_id"),
+                        then=F("amount"),
+                    ),
+                    default=Value(0),
+                    output_field=DecimalField(max_digits=12, decimal_places=2),
+                )
+            ),
+        )
+    )
+    transfers_all_map = {
+        row["withholding_category_id"]: row for row in transfers_all
+    }
+
+    # Transfers (this month)
+    transfers_month = (
+        Transfer.objects
+        .filter(
+            withholding_category_id__in=bucket_ids,
+            date__gte=month_start,
+            date__lte=month_end,
+        )
+        .values("withholding_category_id")
+        .annotate(
+            in_total=Sum(
+                Case(
+                    When(
+                        to_account_id=F("withholding_category__account_id"),
+                        then=F("amount"),
+                    ),
+                    default=Value(0),
+                    output_field=DecimalField(max_digits=12, decimal_places=2),
+                )
+            ),
+            out_total=Sum(
+                Case(
+                    When(
+                        from_account_id=F("withholding_category__account_id"),
+                        then=F("amount"),
+                    ),
+                    default=Value(0),
+                    output_field=DecimalField(max_digits=12, decimal_places=2),
+                )
+            ),
+        )
+    )
+    transfers_month_map = {
+        row["withholding_category_id"]: row for row in transfers_month
+    }
+
+    # Expenses (all-time)
+    expenses_all = (
+        Expense.objects
+        .filter(withholding_category_id__in=bucket_ids)
+        .values("withholding_category_id")
+        .annotate(
+            exp_total=Sum(
+                "amount",
+                output_field=DecimalField(max_digits=12, decimal_places=2),
             )
+        )
+    )
+    expenses_all_map = {
+        row["withholding_category_id"]: row for row in expenses_all
+    }
 
-            messages.success(
-                request,
-                f"Payout of ${amount} recorded from '{category.name}'."
+    # Expenses (this month)
+    expenses_month = (
+        Expense.objects
+        .filter(
+            withholding_category_id__in=bucket_ids,
+            date__gte=month_start,
+            date__lte=month_end,
+        )
+        .values("withholding_category_id")
+        .annotate(
+            exp_total=Sum(
+                "amount",
+                output_field=DecimalField(max_digits=12, decimal_places=2),
             )
-            return redirect("withholding_overview")
+        )
+    )
+    expenses_month_map = {
+        row["withholding_category_id"]: row for row in expenses_month
+    }
 
-        else:
-            messages.error(request, "Please correct the payout form errors.")
+    # Build per-bucket summaries and attach them to bucket objects
+    for account in accounts:
+        account_total_balance = Decimal("0.00")
+        account_month_contrib = Decimal("0.00")
+        account_month_payout = Decimal("0.00")
+
+        for bucket in account.withholding_categories.all():
+            all_tr = transfers_all_map.get(bucket.id, {})
+            month_tr = transfers_month_map.get(bucket.id, {})
+            all_exp = expenses_all_map.get(bucket.id, {})
+            month_exp = expenses_month_map.get(bucket.id, {})
+
+            in_total = all_tr.get("in_total") or Decimal("0.00")
+            out_total = all_tr.get("out_total") or Decimal("0.00")
+            exp_total = all_exp.get("exp_total") or Decimal("0.00")
+
+            # All-time derived balance for this bucket
+            balance = in_total - out_total - exp_total
+
+            month_in = month_tr.get("in_total") or Decimal("0.00")
+            month_out = month_tr.get("out_total") or Decimal("0.00")
+            month_exp_total = month_exp.get("exp_total") or Decimal("0.00")
+
+            month_contrib = month_in
+            month_payout = month_out + month_exp_total
+            month_net = month_contrib - month_payout
+
+            # Remaining to target (if target defined)
+            remaining_to_target = None
+            if getattr(bucket, "target_amount", None):
+                remaining_to_target = bucket.target_amount - balance
+
+            # Attach to bucket instance for template
+            bucket.derived_balance = balance
+            bucket.month_contrib = month_contrib
+            bucket.month_payout = month_payout
+            bucket.month_net = month_net
+            bucket.remaining_to_target = remaining_to_target
+
+            # Accumulate per-account
+            account_total_balance += balance
+            account_month_contrib += month_contrib
+            account_month_payout += month_payout
+
+        account.total_bucket_balance = account_total_balance
+        account.total_month_contrib = account_month_contrib
+        account.total_month_payout = account_month_payout
 
     return render(
         request,
         "withholding_overview.html",
         {
             "accounts": accounts,
-            "payout_form": payout_form,
+            "selected_month": selected_month,
+            "selected_month_display": selected_month_display,
         },
     )
 
+
+
 def withholding_category_detail(request, pk):
+    """
+    Detail view for a single withholding bucket with date range filtering.
+    """
     category = get_object_or_404(
-        WithholdingCategory.objects.prefetch_related("transactions"), pk=pk
+        WithholdingCategory.objects.select_related("account"),
+        pk=pk,
     )
 
-    transactions = list(category.transactions.all().order_by("-date", "-id"))
+    # ---------- Date Range Selection ----------
+    today = date.today()
+    selected_range = request.GET.get("range", "12")  # Default: Last 12 months
 
-    running_balance = category.balance
-    rows = []
-    for tx in transactions:
-        rows.append({"tx": tx, "balance_after": running_balance})
-        running_balance -= tx.amount
+    # Build range options
+    current_year = today.year
+    range_options = [
+        ("12", "Last 12 months"),
+        ("ytd", f"Year to Date ({current_year})"),
+    ]
+    # Add previous years
+    for year in range(current_year, current_year - 5, -1):
+        range_options.append((str(year), str(year)))
 
-    return render(request, "withholding_category_detail.html", {"category": category, "rows": rows})
+    # Calculate date range based on selection
+    if selected_range == "ytd":
+        first_day = date(current_year, 1, 1)
+        last_day = today
+    elif selected_range == "12":
+        # Last 12 months
+        first_day = date(today.year - 1, today.month, 1)
+        last_day = date(today.year, today.month, monthrange(today.year, today.month)[1])
+    else:
+        # Specific year
+        try:
+            year = int(selected_range)
+            first_day = date(year, 1, 1)
+            last_day = date(year, 12, 31)
+        except (ValueError, TypeError):
+            # Fallback to last 12 months
+            first_day = date(today.year - 1, today.month, 1)
+            last_day = date(today.year, today.month, monthrange(today.year, today.month)[1])
+
+    # ---------- Derived history from Transfers + Expenses (filtered by date range) ----------
+
+    # Transfers tagged with this bucket (within date range)
+    transfer_qs = (
+        Transfer.objects.filter(
+            withholding_category=category,
+            date__range=(first_day, last_day)
+        )
+        .select_related("from_account", "to_account")
+        .order_by("date", "id")
+    )
+
+    # Expenses funded from this bucket (within date range)
+    expense_qs = (
+        Expense.objects.filter(
+            withholding_category=category,
+            date__range=(first_day, last_day)
+        )
+        .select_related("category")
+        .order_by("date", "id")
+    )
+
+    derived_events = []
+    bucket_account = category.account
+
+    # Transfers
+    for t in transfer_qs:
+        desc = t.description or "Transfer"
+        signed = Decimal("0.00")
+        kind = "transfer_other"
+
+        if bucket_account:
+            if t.to_account_id == bucket_account.id:
+                # Money moved into the bucket
+                signed = t.amount
+                kind = "transfer_in"
+            elif t.from_account_id == bucket_account.id:
+                # Money moved out of the bucket
+                signed = -t.amount
+                kind = "transfer_out"
+
+        derived_events.append(
+            {
+                "kind": kind,
+                "date": t.date,
+                "signed_amount": signed,
+                "description": desc,
+                "transfer_id": t.id,
+                "expense_id": None,
+            }
+        )
+
+    # Expenses
+    for e in expense_qs:
+        if e.vendor_name:
+            desc = e.vendor_name
+        elif e.category_id:
+            desc = e.category.name
+        else:
+            desc = "Expense"
+
+        # Expense funded from bucket always reduces it
+        signed = -e.amount
+        derived_events.append(
+            {
+                "kind": "expense",
+                "date": e.date,
+                "signed_amount": signed,
+                "description": desc,
+                "transfer_id": None,
+                "expense_id": e.id,
+            }
+        )
+
+    # Sort by date (ascending) to build running total
+    derived_events.sort(key=lambda ev: (ev["date"],))
+
+    derived_running = Decimal("0.00")
+    derived_rows_chron = []
+    for ev in derived_events:
+        derived_running += ev["signed_amount"]
+        derived_rows_chron.append(
+            {
+                "date": ev["date"],
+                "kind": ev["kind"],
+                "description": ev["description"],
+                "signed_amount": ev["signed_amount"],
+                "balance_after": derived_running,
+                "transfer_id": ev.get("transfer_id"),
+                "expense_id": ev.get("expense_id"),
+            }
+        )
+
+    # Calculate total balance (all-time, not just the selected range)
+    all_transfer_qs = Transfer.objects.filter(withholding_category=category).select_related("from_account", "to_account")
+    all_expense_qs = Expense.objects.filter(withholding_category=category)
+
+    derived_balance = Decimal("0.00")
+    bucket_account = category.account
+
+    for t in all_transfer_qs:
+        if bucket_account:
+            if t.to_account_id == bucket_account.id:
+                derived_balance += t.amount
+            elif t.from_account_id == bucket_account.id:
+                derived_balance -= t.amount
+
+    for e in all_expense_qs:
+        derived_balance -= e.amount
+
+    # Calculate total for the selected range
+    range_total = sum(ev["signed_amount"] for ev in derived_events)
+
+    context = {
+        "category": category,
+        "derived_rows": list(reversed(derived_rows_chron)),  # newest first for display
+        "derived_balance": derived_balance,  # Current balance (all-time)
+        "range_total": range_total,  # Total change in selected period
+        "range_options": range_options,
+        "selected_range": selected_range,
+    }
+    return render(request, "withholding_category_detail.html", context)
+
 
 @require_POST
 def update_withholding_transaction(request, pk):
@@ -2214,4 +3617,225 @@ def expense_edit(request, expense_id):
         "form": form,
         "attachments": attachments,
     })
+
+
+@require_http_methods(["GET", "POST"])
+def income_edit(request, income_id):
+    income = get_object_or_404(
+        Income.objects.select_related("category", "income_category", "rental_unit", "bank_account"),
+        pk=income_id
+    )
+
+    if request.method == "POST":
+        form = IncomeEditForm(request.POST, instance=income)
+
+        if form.is_valid():
+            form.save()
+            messages.success(request, "Income updated successfully.")
+            # Redirect back to dashboard with the income's month
+            return redirect(f"{reverse('dashboard')}?month={income.date.year}-{income.date.month:02d}")
+
+        # If the form is invalid, show errors (and keep user on page)
+        messages.error(request, "Please correct the errors below.")
+    else:
+        form = IncomeEditForm(instance=income)
+
+    return render(request, "income_edit.html", {
+        "income": income,
+        "form": form,
+    })
+
+
+@require_http_methods(["GET", "POST"])
+def transfer_edit(request, transfer_id):
+    transfer = get_object_or_404(
+        Transfer.objects.select_related("from_account", "to_account", "withholding_category"),
+        pk=transfer_id
+    )
+
+    if request.method == "POST":
+        form = TransferEditForm(request.POST, instance=transfer)
+
+        if form.is_valid():
+            form.save()
+            messages.success(request, "Transfer updated successfully.")
+            # Redirect back to dashboard with the transfer's month
+            return redirect(f"{reverse('dashboard')}?month={transfer.date.year}-{transfer.date.month:02d}")
+
+        # If the form is invalid, show errors (and keep user on page)
+        messages.error(request, "Please correct the errors below.")
+    else:
+        form = TransferEditForm(instance=transfer)
+
+    return render(request, "transfer_edit.html", {
+        "transfer": transfer,
+        "form": form,
+    })
+
+
+@require_http_methods(['GET'])
+def get_transfer_api(request, transfer_id):
+    """API endpoint to get transfer data as JSON."""
+    try:
+        transfer = Transfer.objects.select_related(
+            'from_account', 'to_account', 'withholding_category', 'parent_transfer'
+        ).prefetch_related('splits').get(id=transfer_id)
+
+        data = {
+            'id': transfer.id,
+            'date': transfer.date.isoformat(),
+            'amount': str(transfer.amount),
+            'description': transfer.description,
+            'notes': transfer.notes,
+            'from_account_id': transfer.from_account_id,
+            'to_account_id': transfer.to_account_id,
+            'withholding_category_id': transfer.withholding_category_id,
+            'is_split_parent': transfer.is_split_parent,
+            'parent_transfer_id': transfer.parent_transfer_id,
+            'split_count': transfer.split_count,
+        }
+
+        if transfer.is_split_parent:
+            data['splits'] = [{
+                'id': s.id,
+                'amount': str(s.amount),
+                'from_account_id': s.from_account_id,
+                'to_account_id': s.to_account_id,
+                'withholding_category_id': s.withholding_category_id,
+                'notes': s.notes,
+                'split_order': s.split_order,
+            } for s in transfer.splits.order_by('split_order')]
+
+        return JsonResponse(data)
+    except Transfer.DoesNotExist:
+        return JsonResponse({'error': 'Not found'}, status=404)
+
+
+@transaction.atomic
+def handle_transfer_edit(request):
+    """Handle transfer editing including splits."""
+    transfer_id = request.POST.get('transfer_id')
+    transfer = get_object_or_404(Transfer, pk=transfer_id)
+
+    # Handle delete
+    if 'delete_transfer' in request.POST:
+        transfer.delete()  # CASCADE deletes children automatically
+        return redirect(f"/?month={request.POST.get('month', '')}")
+
+    # Handle split mode
+    if request.POST.get('split_mode') == '1':
+        return handle_transfer_split(request, transfer)
+
+    # Handle normal update (non-split or split child edit)
+    return handle_transfer_update(request, transfer)
+
+
+@transaction.atomic
+def handle_transfer_split(request, transfer):
+    """Create or update splits for a transfer."""
+
+    # Collect split data from POST
+    splits = []
+    i = 0
+    while f'split-{i}-amount' in request.POST:
+        try:
+            amount = Decimal(request.POST.get(f'split-{i}-amount', '0'))
+            from_account_id = request.POST.get(f'split-{i}-from_account') or None
+            to_account_id = request.POST.get(f'split-{i}-to_account') or None
+            withholding_id = request.POST.get(f'split-{i}-withholding_category') or None
+            notes = request.POST.get(f'split-{i}-notes', '')
+
+            if amount > 0:
+                splits.append({
+                    'amount': amount,
+                    'from_account_id': from_account_id,
+                    'to_account_id': to_account_id,
+                    'withholding_category_id': withholding_id,
+                    'notes': notes,
+                })
+        except (InvalidOperation, ValueError):
+            continue
+        i += 1
+
+    # Validate sum
+    total = sum(s['amount'] for s in splits)
+    tolerance = Decimal('0.005')
+    if abs(transfer.amount - total) > tolerance:
+        # Return error - in production, use messages framework
+        return redirect(f"/?month={request.POST.get('month', '')}")
+
+    # Mark as split parent and delete old splits
+    transfer.is_split_parent = True
+    transfer.save()
+    transfer.splits.all().delete()
+
+    # Create new splits
+    for idx, split_data in enumerate(splits):
+        Transfer.objects.create(
+            date=transfer.date,
+            amount=split_data['amount'],
+            description=transfer.description,
+            notes=split_data['notes'],
+            from_account_id=split_data['from_account_id'],
+            to_account_id=split_data['to_account_id'],
+            withholding_category_id=split_data['withholding_category_id'],
+            parent_transfer=transfer,
+            split_order=idx + 1,
+        )
+
+    return redirect(f"/?month={request.POST.get('month', '')}")
+
+
+def handle_transfer_update(request, transfer):
+    """Update a single transfer (non-split or split child)."""
+    # Date
+    transfer.date = datetime.strptime(request.POST["date"], "%Y-%m-%d").date()
+
+    # Amount
+    amount_str = (request.POST.get("amount") or "").strip()
+    if amount_str:
+        try:
+            transfer.amount = Decimal(amount_str)
+        except (InvalidOperation, ValueError):
+            pass
+
+    # From / To accounts
+    from_account_id = (request.POST.get("from_account") or "").strip()
+    to_account_id = (request.POST.get("to_account") or "").strip()
+
+    transfer.from_account = (
+        get_object_or_404(BankAccount, pk=from_account_id)
+        if from_account_id else None
+    )
+    transfer.to_account = (
+        get_object_or_404(BankAccount, pk=to_account_id)
+        if to_account_id else None
+    )
+
+    # Withholding bucket
+    bucket_id = (request.POST.get("withholding_category") or "").strip()
+    if bucket_id:
+        transfer.withholding_category = get_object_or_404(
+            WithholdingCategory,
+            pk=bucket_id
+        )
+    else:
+        transfer.withholding_category = None
+
+    # Notes
+    transfer.notes = request.POST.get("notes", "")
+
+    transfer.save()
+
+    # If this is a split child, validate parent still sums correctly
+    if transfer.parent_transfer and not transfer.parent_transfer.validate_split_amounts():
+        # Log warning or notify user
+        pass
+
+    if transfer.date:
+        selected_month_param = f"{transfer.date.year:04d}-{transfer.date.month:02d}"
+    else:
+        selected_month_param = request.POST.get('month', '')
+
+    return redirect(f"/?month={selected_month_param}")
 

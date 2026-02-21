@@ -1,99 +1,27 @@
 from django import forms
 from django.utils import timezone
-from .models import Expense, ExpenseAttachment, Income, Category, IncomeCategory, BankAccount, WithholdingCategory, RentalUnit, CRARentalExpenseCategory
+from .models import (
+    Expense,
+    ExpenseAttachment,
+    Income,
+    Category,
+    IncomeCategory,
+    BankAccount,
+    WithholdingCategory,
+    RentalUnit,
+    CRARentalExpenseCategory,
+    Transfer,
+)
+
+
 
 
 class MultipleFileInput(forms.FileInput):
     allow_multiple_selected = True
 
 
-class TransactionForm(forms.Form):
-    ENTRY_TYPE_CHOICES = [
-        ('expense', 'Expense'),
-        ('income', 'Income'),
-    ]
 
 
-
-    entry_type = forms.ChoiceField(choices=ENTRY_TYPE_CHOICES, initial='expense')
-    date = forms.DateField(widget=forms.widgets.DateInput(attrs={'type': 'date'}))
-    amount = forms.DecimalField()
-    vendor_name = forms.CharField(required=False)
-    category = forms.ModelChoiceField(queryset=Category.objects.none(), required=False)
-    source = forms.ModelChoiceField(
-        queryset=IncomeCategory.objects.all().order_by("name"),
-        required=False,
-        empty_label="(Select income category)",
-    )
-
-    # Income-side rental tagging (optional override; otherwise default from IncomeCategory)
-    income_rental_unit = forms.ModelChoiceField(
-        queryset=RentalUnit.objects.select_related("property").order_by("property__name", "name"),
-        required=False,
-        empty_label="(Auto from source)",
-    )
-
-    taxable = forms.BooleanField(required=False, initial=True)
-    location = forms.CharField(required=False, initial='Ottawa')
-    notes = forms.CharField(widget=forms.Textarea(attrs={'rows': 2}), required=False)
-
-    # NEW: link an expense to a withholding bucket (contribution)
-    apply_to_withholding = forms.BooleanField(
-        required=False,
-        initial=False,
-        help_text="Also add this amount to a withholding bucket.",
-    )
-    withholding_category = forms.ModelChoiceField(
-        queryset=WithholdingCategory.objects.none(),
-        required=False,
-        empty_label="(Select withholding bucket)",
-    )
-    rental_unit = forms.ModelChoiceField(
-        queryset=RentalUnit.objects.select_related("property").order_by("property__name", "name"),
-        required=False,
-    )
-    cra_category = forms.ModelChoiceField(
-        queryset=CRARentalExpenseCategory.objects.filter(is_active=True).order_by("sort_order", "name"),
-        required=False,
-    )
-    rental_business_use_pct = forms.DecimalField(
-        required=False,
-        max_digits=5,
-        decimal_places=2,
-        min_value=0,
-        max_value=100,
-    )
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-        self.fields['category'].queryset = Category.objects.all()
-
-        # Only show buckets that belong to withholding accounts
-        self.fields['withholding_category'].queryset = (
-            WithholdingCategory.objects
-            .select_related("account")
-            .order_by("account__name", "name")
-        )
-
-        # Do NOT hide the fields server-side; let JS toggle visibility
-        entry_type_value = (
-            self.data.get('entry_type')
-            or self.initial.get('entry_type')
-            or 'expense'
-        )
-        selected_source = self.data.get('source') or self.initial.get('source')
-
-        # Default taxable behaviour comes from IncomeCategory.taxable_default
-        taxable_default = True
-        if selected_source:
-            try:
-                # selected_source will be a pk string in POST data
-                cat_obj = IncomeCategory.objects.get(pk=selected_source)
-                taxable_default = cat_obj.taxable_default
-            except Exception:
-                taxable_default = True
-
-        self.fields["taxable"].initial = taxable_default
 
 class CSVUploadForm(forms.Form):
     """
@@ -126,6 +54,7 @@ class TransactionImportForm(forms.Form):
     ENTRY_TYPE_CHOICES = [
         ("expense", "Expense"),
         ("income", "Income"),
+        ("transfer", "Transfer"),
     ]
 
     # Hidden flag used when you click "Skip" in the UI (wired in the template)
@@ -194,6 +123,19 @@ class TransactionImportForm(forms.Form):
         widget=forms.Select(attrs={"class": "form-select"}),
     )
 
+    from_account = forms.ModelChoiceField(
+        queryset=BankAccount.objects.all().order_by("institution", "name"),
+        required=False,
+        empty_label="(From account)",
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+
+    to_account = forms.ModelChoiceField(
+        queryset=BankAccount.objects.all().order_by("institution", "name"),
+        required=False,
+        empty_label="(To account)",
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
 
     location = forms.CharField(
         max_length=100,
@@ -267,6 +209,18 @@ class TransactionImportForm(forms.Form):
                     "Withholding adjustments are only supported on expense rows.",
                 )
 
+        elif entry_type == "transfer":
+            from_account = cleaned.get("from_account")
+            to_account = cleaned.get("to_account")
+
+            # At least one account required
+            if not from_account and not to_account:
+                self.add_error(None, "Transfer requires at least one account (from or to).")
+
+            # Prevent same-account transfers
+            if from_account and to_account and from_account == to_account:
+                self.add_error(None, "From and To accounts cannot be the same.")
+
         # Withholding-specific validations
         if (apply_to_withholding or is_withholding_payout) and not withholding_category:
             self.add_error(
@@ -310,6 +264,52 @@ class ExpenseEditForm(forms.ModelForm):
             "rental_business_use_pct": forms.NumberInput(attrs={"class": "form-control"}),
         }
 
+class IncomeEditForm(forms.ModelForm):
+    class Meta:
+        model = Income
+        fields = [
+            "date",
+            "amount",
+            "category",
+            "income_category",
+            "rental_unit",
+            "taxable",
+            "notes",
+            "bank_account",
+        ]
+        widgets = {
+            "date": forms.DateInput(attrs={"type": "date", "class": "form-control"}),
+            "amount": forms.NumberInput(attrs={"class": "form-control"}),
+            "category": forms.Select(attrs={"class": "form-select"}),
+            "income_category": forms.Select(attrs={"class": "form-select"}),
+            "rental_unit": forms.Select(attrs={"class": "form-select"}),
+            "taxable": forms.CheckboxInput(attrs={"class": "form-check-input"}),
+            "notes": forms.Textarea(attrs={"class": "form-control", "rows": 3}),
+            "bank_account": forms.Select(attrs={"class": "form-select"}),
+        }
+
+class TransferEditForm(forms.ModelForm):
+    class Meta:
+        model = Transfer
+        fields = [
+            "date",
+            "amount",
+            "description",
+            "notes",
+            "from_account",
+            "to_account",
+            "withholding_category",
+        ]
+        widgets = {
+            "date": forms.DateInput(attrs={"type": "date", "class": "form-control"}),
+            "amount": forms.NumberInput(attrs={"class": "form-control"}),
+            "description": forms.TextInput(attrs={"class": "form-control"}),
+            "notes": forms.Textarea(attrs={"class": "form-control", "rows": 3}),
+            "from_account": forms.Select(attrs={"class": "form-select"}),
+            "to_account": forms.Select(attrs={"class": "form-select"}),
+            "withholding_category": forms.Select(attrs={"class": "form-select"}),
+        }
+
 class ExpenseAttachmentUploadForm(forms.Form):
     files = forms.FileField(
         required=False,
@@ -348,3 +348,197 @@ class WithholdingPayoutForm(forms.Form):
         widget=forms.TextInput(attrs={"class": "form-control"}),
         label="Note",
     )
+
+class TransactionForm(forms.Form):
+    ENTRY_TYPE_CHOICES = [
+        ("expense", "Expense"),
+        ("income", "Income"),
+        ("transfer", "Transfer"),
+    ]
+
+    # Common
+    entry_type = forms.ChoiceField(choices=ENTRY_TYPE_CHOICES, initial="expense")
+    date = forms.DateField(widget=forms.widgets.DateInput(attrs={"type": "date"}))
+    amount = forms.DecimalField()
+
+    # Expense fields
+    vendor_name = forms.CharField(required=False)
+    category = forms.ModelChoiceField(queryset=Category.objects.none(), required=False)
+    location = forms.CharField(required=False, initial="Ottawa")
+
+    rental_unit = forms.ModelChoiceField(
+        queryset=RentalUnit.objects.select_related("property").order_by(
+            "property__name", "name"
+        ),
+        required=False,
+    )
+    cra_category = forms.ModelChoiceField(
+        queryset=CRARentalExpenseCategory.objects.filter(is_active=True).order_by(
+            "sort_order", "name"
+        ),
+        required=False,
+    )
+    rental_business_use_pct = forms.DecimalField(
+        required=False,
+        max_digits=5,
+        decimal_places=2,
+        min_value=0,
+        max_value=100,
+    )
+
+    # Income fields
+    source = forms.ModelChoiceField(
+        queryset=IncomeCategory.objects.all().order_by("name"),
+        required=False,
+        empty_label="(Select income category)",
+    )
+    income_rental_unit = forms.ModelChoiceField(
+        queryset=RentalUnit.objects.select_related("property").order_by(
+            "property__name", "name"
+        ),
+        required=False,
+        empty_label="(Auto from source)",
+    )
+    taxable = forms.BooleanField(required=False, initial=True)
+
+    # Transfer fields
+    from_account = forms.ModelChoiceField(
+        queryset=BankAccount.objects.all().order_by("institution", "name"),
+        required=False,
+        empty_label="(From account)",
+    )
+    to_account = forms.ModelChoiceField(
+        queryset=BankAccount.objects.all().order_by("institution", "name"),
+        required=False,
+        empty_label="(To account)",
+    )
+
+    # NEW: Common bank account for income/expense
+    bank_account = forms.ModelChoiceField(
+        queryset=BankAccount.objects.all().order_by("institution", "name"),
+        required=False,
+        empty_label="(Select bank account)",
+    )
+
+    # Withholding linkage (used by expense + transfer, but with different semantics)
+    apply_to_withholding = forms.BooleanField(
+        required=False,
+        initial=False,
+        help_text="If this expense is funded from a withholding bucket, tick this and choose the bucket.",
+    )
+    withholding_category = forms.ModelChoiceField(
+        queryset=WithholdingCategory.objects.none(),
+        required=False,
+        empty_label="(Select withholding bucket)",
+    )
+
+    # Common
+    notes = forms.CharField(
+        widget=forms.Textarea(attrs={"rows": 2}),
+        required=False,
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # Expense categories
+        self.fields["category"].queryset = Category.objects.all().order_by("name")
+
+        # Withholding buckets – only those attached to withholding accounts
+        self.fields["withholding_category"].queryset = (
+            WithholdingCategory.objects.select_related("account")
+            .order_by("account__name", "name")
+        )
+
+        # Bank accounts for transfers and income/expense
+        self.fields["from_account"].queryset = BankAccount.objects.all().order_by(
+            "institution", "name"
+        )
+        self.fields["to_account"].queryset = BankAccount.objects.all().order_by(
+            "institution", "name"
+        )
+        self.fields["bank_account"].queryset = BankAccount.objects.all().order_by(
+            "institution", "name"
+        )
+
+        # Default taxable behaviour comes from IncomeCategory.taxable_default
+        entry_type_value = (
+            self.data.get("entry_type")
+            or self.initial.get("entry_type")
+            or "expense"
+        )
+        selected_source = self.data.get("source") or self.initial.get("source")
+
+        taxable_default = True
+        if selected_source:
+            try:
+                cat_obj = IncomeCategory.objects.get(pk=selected_source)
+                if hasattr(cat_obj, "taxable_default"):
+                    taxable_default = cat_obj.taxable_default
+            except IncomeCategory.DoesNotExist:
+                taxable_default = True
+
+        if entry_type_value == "income":
+            self.fields["taxable"].initial = taxable_default
+
+    def clean(self):
+        cleaned_data = super().clean()
+        entry_type = cleaned_data.get("entry_type")
+        amount = cleaned_data.get("amount")
+        bank_account = cleaned_data.get("bank_account")
+
+        if amount is not None and amount <= 0:
+            self.add_error("amount", "Amount must be a positive number.")
+
+        # Require a bank account for income and expense (but not transfer)
+        if entry_type in ("expense", "income") and not bank_account:
+            self.add_error(
+                "bank_account",
+                "Please select a bank account for this transaction.",
+            )
+            # Also raise a non-field error to be absolutely sure form.is_valid() is false
+            raise forms.ValidationError(
+                "Bank account is required for income and expense entries."
+            )
+
+        # Transfer-specific validation
+        if entry_type == "transfer":
+            from_account = cleaned_data.get("from_account")
+            to_account = cleaned_data.get("to_account")
+            bucket = cleaned_data.get("withholding_category")
+
+            if not from_account and not to_account:
+                raise forms.ValidationError(
+                    "For a transfer, at least one of From account or To account must be specified."
+                )
+
+            if from_account and to_account and from_account == to_account:
+                raise forms.ValidationError(
+                    "From account and To account cannot be the same for a transfer."
+                )
+
+            if bucket:
+                # Enforce: the chosen bucket must live on either the From or To account
+                if not (
+                    (from_account and from_account == bucket.account)
+                    or (to_account and to_account == bucket.account)
+                ):
+                    raise forms.ValidationError(
+                        "When selecting a withholding bucket, either the From account "
+                        "or the To account must be that bucket's account."
+                    )
+
+        # Expense funded from bucket sanity check
+        if entry_type == "expense":
+            apply_to_withholding = cleaned_data.get("apply_to_withholding")
+            bucket = cleaned_data.get("withholding_category")
+            if apply_to_withholding and not bucket:
+                self.add_error(
+                    "withholding_category",
+                    "Select a withholding bucket if this expense is funded from one.",
+                )
+
+        return cleaned_data
+
+
+

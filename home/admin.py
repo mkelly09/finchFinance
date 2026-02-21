@@ -11,7 +11,9 @@ from .models import (
     Income,
     RentalProperty,
     PropertyMortgage,
+    Transfer,
 )
+
 
 
 # ---------- CATEGORY ----------
@@ -288,3 +290,34 @@ class ExpenseAttachmentAdmin(admin.ModelAdmin):
     list_display = ("id", "expense", "original_name", "uploaded_at")
     list_filter = ("uploaded_at",)
     search_fields = ("original_name", "expense__vendor_name")
+
+# ---------- TRANSFERS ----------
+
+
+@admin.register(Transfer)
+class TransferAdmin(admin.ModelAdmin):
+    list_display = (
+        "date",
+        "amount",
+        "from_account",
+        "to_account",
+        "withholding_category",
+        "description",
+    )
+    list_filter = (
+        "date",
+        "from_account",
+        "to_account",
+        "withholding_category",
+    )
+    search_fields = (
+        "description",
+        "notes",
+    )
+    autocomplete_fields = (
+        "from_account",
+        "to_account",
+        "withholding_category",
+        "import_batch",
+    )
+    ordering = ("-date", "-id")

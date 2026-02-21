@@ -16,6 +16,8 @@ urlpatterns = [
     path("categories/", views.category_list, name="category_list"),
     path("update-expense/", views.update_expense, name="update_expense"),
     path("bank-accounts/", views.bank_accounts, name="bank_accounts"),
+    path("accounts/<int:account_id>/", views.bank_account_detail, name="bank_account_detail"),
+
     path("import-transactions/", views.import_transactions, name="import_transactions"),
     path("import-batch/<int:batch_id>/", views.import_batch_detail, name="import_batch_detail"),
 
@@ -32,7 +34,12 @@ urlpatterns = [
         name="rental_tax_category_detail",
     ),
     path("expenses/<int:expense_id>/edit/", views.expense_edit, name="expense_edit"),
+    path("income/<int:income_id>/edit/", views.income_edit, name="income_edit"),
+    path("transfers/<int:transfer_id>/edit/", views.transfer_edit, name="transfer_edit"),
+    path("unassigned-transactions/", views.unassigned_transactions, name="unassigned_transactions",),
 
+    # Transfer API
+    path('api/transfer/<int:transfer_id>/', views.get_transfer_api, name='get_transfer_api'),
 
 
 ]
