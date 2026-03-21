@@ -475,7 +475,7 @@ class MonthEndIncomeCategorySnapshotAdmin(admin.ModelAdmin):
 @admin.register(UserProfile)
 class UserProfileAdmin(admin.ModelAdmin):
     list_display = ("user",)
-    filter_horizontal = ("pinned_categories",)
+    filter_horizontal = ("pinned_categories", "pinned_income_categories", "pinned_withholding_categories")
 
 
 @admin.register(WebAuthnCredential)

@@ -1449,6 +1449,16 @@ class UserProfile(models.Model):
         blank=True,
         help_text="Expense categories shown on this user's dashboard. Leave empty to show all.",
     )
+    pinned_income_categories = models.ManyToManyField(
+        "IncomeCategory",
+        blank=True,
+        help_text="Income categories shown on this user's dashboard. Leave empty to show all.",
+    )
+    pinned_withholding_categories = models.ManyToManyField(
+        "WithholdingCategory",
+        blank=True,
+        help_text="Withholding buckets shown on this user's dashboard. Leave empty to show all.",
+    )
 
     def __str__(self):
         return f"Profile: {self.user.username}"

@@ -961,18 +961,26 @@ def category_progress(request):
         health_class = "secondary"
         health_icon = "➖"
 
-    # Filter expense_summaries to pinned categories if the user has any pinned
+    # Filter summaries to pinned categories if the user has any pinned
     from .models import UserProfile
     show_all = request.GET.get("show_all") == "1"
     try:
         profile = request.user.profile
-        pinned_names = set(profile.pinned_categories.values_list("name", flat=True))
+        pinned_expense_names = set(profile.pinned_categories.values_list("name", flat=True))
+        pinned_income_names = set(profile.pinned_income_categories.values_list("name", flat=True))
+        pinned_withholding_names = set(profile.pinned_withholding_categories.values_list("name", flat=True))
     except UserProfile.DoesNotExist:
-        pinned_names = set()
+        pinned_expense_names = pinned_income_names = pinned_withholding_names = set()
 
-    pinned_only = bool(pinned_names) and not show_all
+    has_any_pins = any([pinned_expense_names, pinned_income_names, pinned_withholding_names])
+    pinned_only = has_any_pins and not show_all
     if pinned_only:
-        expense_summaries = [s for s in expense_summaries if s["name"] in pinned_names]
+        if pinned_expense_names:
+            expense_summaries = [s for s in expense_summaries if s["name"] in pinned_expense_names]
+        if pinned_income_names:
+            income_summaries = [s for s in income_summaries if s["name"] in pinned_income_names]
+        if pinned_withholding_names:
+            withholding_summaries = [s for s in withholding_summaries if s["name"] in pinned_withholding_names]
 
     context = {
         "income_summaries": income_summaries,
