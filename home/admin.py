@@ -12,6 +12,12 @@ from .models import (
     RentalProperty,
     PropertyMortgage,
     Transfer,
+    MonthEndClose,
+    AccountSnapshot,
+    NetWorthSnapshot,
+    MonthEndExpenseCategorySnapshot,
+    MonthEndWithholdingCategorySnapshot,
+    MonthEndIncomeCategorySnapshot,
 )
 
 
@@ -321,3 +327,142 @@ class TransferAdmin(admin.ModelAdmin):
         "import_batch",
     )
     ordering = ("-date", "-id")
+
+
+# ---------- MONTH-END CLOSE ----------
+
+class AccountSnapshotInline(admin.TabularInline):
+    model = AccountSnapshot
+    extra = 0
+    fields = ("bank_account", "balance", "snapshot_date")
+    readonly_fields = ("snapshot_date",)
+    can_delete = False
+
+
+class NetWorthSnapshotInline(admin.StackedInline):
+    model = NetWorthSnapshot
+    extra = 0
+    fields = (
+        "total_net_worth",
+        "liquid_assets",
+        "investment_assets",
+        "property_value",
+        "liabilities",
+        "notes",
+        "snapshot_date",
+    )
+    readonly_fields = ("snapshot_date",)
+    can_delete = False
+
+
+class ExpenseCategorySnapshotInline(admin.TabularInline):
+    model = MonthEndExpenseCategorySnapshot
+    extra = 0
+    fields = ("category", "monthly_limit", "actual_spent")
+    readonly_fields = ("category", "monthly_limit", "actual_spent")
+    can_delete = False
+
+
+class WithholdingCategorySnapshotInline(admin.TabularInline):
+    model = MonthEndWithholdingCategorySnapshot
+    extra = 0
+    fields = ("withholding_category", "monthly_target", "actual_contributed")
+    readonly_fields = ("withholding_category", "monthly_target", "actual_contributed")
+    can_delete = False
+
+
+class IncomeCategorySnapshotInline(admin.TabularInline):
+    model = MonthEndIncomeCategorySnapshot
+    extra = 0
+    fields = ("income_category", "monthly_target", "actual_received")
+    readonly_fields = ("income_category", "monthly_target", "actual_received")
+    can_delete = False
+
+
+@admin.register(MonthEndClose)
+class MonthEndCloseAdmin(admin.ModelAdmin):
+    list_display = (
+        "month_display",
+        "is_locked",
+        "net_savings",
+        "transaction_count",
+        "closed_at",
+        "closed_by",
+    )
+    list_filter = ("is_locked", "closed_at")
+    search_fields = ("notes",)
+    ordering = ("-month",)
+    inlines = [
+        AccountSnapshotInline,
+        NetWorthSnapshotInline,
+        ExpenseCategorySnapshotInline,
+        WithholdingCategorySnapshotInline,
+        IncomeCategorySnapshotInline,
+    ]
+
+    fieldsets = (
+        ("Month Information", {
+            "fields": ("month", "is_locked", "closed_by", "notes")
+        }),
+        ("Financial Summary", {
+            "fields": (
+                "total_income",
+                "total_expenses",
+                "net_savings",
+                "total_transfers",
+                "transaction_count",
+            )
+        }),
+        ("Backup", {
+            "fields": ("backup_file",)
+        }),
+        ("Reopening Audit Trail", {
+            "fields": ("reopened_at", "reopened_by", "reopen_reason"),
+            "classes": ("collapse",)
+        }),
+    )
+    readonly_fields = ("closed_at",)
+
+
+@admin.register(AccountSnapshot)
+class AccountSnapshotAdmin(admin.ModelAdmin):
+    list_display = ("month_close", "bank_account", "balance", "snapshot_date")
+    list_filter = ("month_close", "bank_account")
+    ordering = ("-snapshot_date",)
+
+
+@admin.register(NetWorthSnapshot)
+class NetWorthSnapshotAdmin(admin.ModelAdmin):
+    list_display = (
+        "month_close",
+        "total_net_worth",
+        "liquid_assets",
+        "investment_assets",
+        "snapshot_date",
+    )
+    list_filter = ("month_close",)
+    ordering = ("-snapshot_date",)
+
+
+@admin.register(MonthEndExpenseCategorySnapshot)
+class MonthEndExpenseCategorySnapshotAdmin(admin.ModelAdmin):
+    list_display = ("month_close", "category", "monthly_limit", "actual_spent")
+    list_filter = ("month_close",)
+    ordering = ("-month_close__month", "category__name")
+    readonly_fields = ("month_close", "category", "monthly_limit", "actual_spent")
+
+
+@admin.register(MonthEndWithholdingCategorySnapshot)
+class MonthEndWithholdingCategorySnapshotAdmin(admin.ModelAdmin):
+    list_display = ("month_close", "withholding_category", "monthly_target", "actual_contributed")
+    list_filter = ("month_close",)
+    ordering = ("-month_close__month", "withholding_category__name")
+    readonly_fields = ("month_close", "withholding_category", "monthly_target", "actual_contributed")
+
+
+@admin.register(MonthEndIncomeCategorySnapshot)
+class MonthEndIncomeCategorySnapshotAdmin(admin.ModelAdmin):
+    list_display = ("month_close", "income_category", "monthly_target", "actual_received")
+    list_filter = ("month_close",)
+    ordering = ("-month_close__month", "income_category__name")
+    readonly_fields = ("month_close", "income_category", "monthly_target", "actual_received")

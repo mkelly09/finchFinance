@@ -20,7 +20,7 @@ from django.conf import settings
 from django.urls import reverse
 from django.db.models.functions import Coalesce
 
-from .forms import TransactionForm, CSVUploadForm, TransactionImportForm, ExpenseEditForm, ExpenseAttachmentUploadForm, WithholdingPayoutForm, IncomeEditForm, TransferEditForm
+from .forms import TransactionForm, CSVUploadForm, TransactionImportForm, ExpenseEditForm, ExpenseAttachmentUploadForm, WithholdingPayoutForm, IncomeEditForm, TransferEditForm, BalanceAdjustmentEditForm
 from .models import (
     Expense,
     ExpenseAttachment,
@@ -32,11 +32,19 @@ from .models import (
     WithholdingCategory,
     WithholdingTransaction,
     Transfer,
+    BalanceAdjustment,
 
     # ✅ Rental / CRA additions
     RentalProperty,
     RentalUnit,
     CRARentalExpenseCategory,
+    PropertyMortgage,
+
+    # ✅ Month-end close + category snapshots
+    MonthEndClose,
+    MonthEndExpenseCategorySnapshot,
+    MonthEndWithholdingCategorySnapshot,
+    MonthEndIncomeCategorySnapshot,
 )
 
 
@@ -219,6 +227,9 @@ def dashboard(request):
         next_month_date = date(year, month + 1, 1)
     next_month = next_month_date.strftime("%Y-%m")
 
+    # Check if this is an AJAX request
+    is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+
     if request.method == "POST":
         # -------------------------
         # Expense modal edit/delete
@@ -226,55 +237,103 @@ def dashboard(request):
         if "expense_id" in request.POST:
             expense = get_object_or_404(Expense, pk=request.POST["expense_id"])
             if "delete_expense" in request.POST:
+                expense_id = expense.id
                 expense.delete()
+
+                if is_ajax:
+                    return JsonResponse({
+                        'deleted': True,
+                        'transaction_id': expense_id
+                    })
+
+                selected_month_param = f"{today.year:04d}-{today.month:02d}"
+                return redirect(f"/?month={selected_month_param}")
             else:
-                expense.date = datetime.strptime(request.POST["date"], "%Y-%m-%d").date()
-                expense.vendor_name = request.POST["vendor_name"]
+                try:
+                    expense.date = datetime.strptime(request.POST["date"], "%Y-%m-%d").date()
+                    expense.vendor_name = request.POST["vendor_name"]
 
-                category_name = request.POST["category"]
-                expense.category = get_object_or_404(Category, name=category_name)
+                    category_name = request.POST["category"]
+                    expense.category = get_object_or_404(Category, name=category_name)
 
-                expense.location = request.POST.get("location", "Ottawa")
+                    expense.location = request.POST.get("location", "Ottawa")
 
-                amount_str = (request.POST.get("amount") or "").strip()
-                if amount_str:
-                    try:
-                        expense.amount = Decimal(amount_str)
-                    except (InvalidOperation, ValueError):
-                        pass
+                    amount_str = (request.POST.get("amount") or "").strip()
+                    if amount_str:
+                        try:
+                            expense.amount = Decimal(amount_str)
+                        except (InvalidOperation, ValueError):
+                            if is_ajax:
+                                return JsonResponse({
+                                    'error': 'Invalid amount format'
+                                }, status=400)
+                            pass
 
-                expense.notes = request.POST.get("notes", "")
+                    expense.notes = request.POST.get("notes", "")
 
-                # Bank account
-                bank_account_id = (request.POST.get("bank_account") or "").strip()
-                if bank_account_id:
-                    expense.bank_account = get_object_or_404(BankAccount, pk=bank_account_id)
-                else:
-                    expense.bank_account = None
+                    # Bank account
+                    bank_account_id = (request.POST.get("bank_account") or "").strip()
+                    if bank_account_id:
+                        expense.bank_account = get_object_or_404(BankAccount, pk=bank_account_id)
+                    else:
+                        expense.bank_account = None
 
-                # Rental + CRA fields
-                rental_unit_id = (request.POST.get("rental_unit") or "").strip()
-                if rental_unit_id:
-                    expense.rental_unit = get_object_or_404(RentalUnit, pk=rental_unit_id)
-                else:
-                    expense.rental_unit = None
+                    # Rental + CRA fields
+                    rental_unit_id = (request.POST.get("rental_unit") or "").strip()
+                    if rental_unit_id:
+                        expense.rental_unit = get_object_or_404(RentalUnit, pk=rental_unit_id)
+                    else:
+                        expense.rental_unit = None
 
-                cra_category_id = (request.POST.get("cra_category") or "").strip()
-                if cra_category_id:
-                    expense.cra_category = get_object_or_404(
-                        CRARentalExpenseCategory,
-                        pk=cra_category_id
-                    )
-                else:
-                    expense.cra_category = None
+                    cra_category_id = (request.POST.get("cra_category") or "").strip()
+                    if cra_category_id:
+                        expense.cra_category = get_object_or_404(
+                            CRARentalExpenseCategory,
+                            pk=cra_category_id
+                        )
+                    else:
+                        expense.cra_category = None
 
-                pct_str = (request.POST.get("rental_business_use_pct") or "").strip()
-                if pct_str:
-                    expense.rental_business_use_pct = Decimal(pct_str)
-                else:
-                    expense.rental_business_use_pct = None
+                    pct_str = (request.POST.get("rental_business_use_pct") or "").strip()
+                    if pct_str:
+                        expense.rental_business_use_pct = Decimal(pct_str)
+                    else:
+                        expense.rental_business_use_pct = None
 
-                expense.save()
+                    expense.save()
+
+                    if is_ajax:
+                        # Format rental unit display
+                        rental_unit_display = None
+                        if expense.rental_unit:
+                            rental_unit_display = f"{expense.rental_unit.property.name} — {expense.rental_unit.name}"
+
+                        return JsonResponse({
+                            'success': True,
+                            'transaction': {
+                                'id': expense.id,
+                                'date': expense.date.strftime('%Y-%m-%d'),
+                                'date_display': expense.date.strftime('%Y-%m-%d'),
+                                'vendor_name': expense.vendor_name,
+                                'category_name': expense.category.name,
+                                'location': expense.location,
+                                'amount': str(expense.amount),
+                                'amount_display': f"{expense.amount:,.2f}",
+                                'notes': expense.notes or '',
+                                'bank_account_id': expense.bank_account.id if expense.bank_account else '',
+                                'bank_account_name': expense.bank_account.name if expense.bank_account else '',
+                                'rental_unit_id': expense.rental_unit.id if expense.rental_unit else '',
+                                'rental_unit_display': rental_unit_display or '',
+                                'cra_category_id': expense.cra_category.id if expense.cra_category else '',
+                                'rental_business_use_pct': str(expense.rental_business_use_pct) if expense.rental_business_use_pct else ''
+                            }
+                        })
+                except Exception as e:
+                    if is_ajax:
+                        return JsonResponse({
+                            'error': f'Error updating expense: {str(e)}'
+                        }, status=400)
+                    raise
 
             selected_month_param = f"{expense.date.year:04d}-{expense.date.month:02d}"
             return redirect(f"/?month={selected_month_param}")
@@ -285,43 +344,89 @@ def dashboard(request):
         elif "income_id" in request.POST:
             income = get_object_or_404(Income, pk=request.POST["income_id"])
             if "delete_income" in request.POST:
+                income_id = income.id
                 income.delete()
+
+                if is_ajax:
+                    return JsonResponse({
+                        'deleted': True,
+                        'transaction_id': income_id
+                    })
+
+                selected_month_param = f"{today.year:04d}-{today.month:02d}"
+                return redirect(f"/?month={selected_month_param}")
             else:
-                income.date = datetime.strptime(request.POST["date"], "%Y-%m-%d").date()
+                try:
+                    income.date = datetime.strptime(request.POST["date"], "%Y-%m-%d").date()
 
-                source_id = request.POST.get("source")
-                income_cat = get_object_or_404(IncomeCategory, pk=source_id) if source_id else None
+                    source_id = request.POST.get("source")
+                    income_cat = get_object_or_404(IncomeCategory, pk=source_id) if source_id else None
 
-                income.income_category = income_cat
-                if income_cat:
-                    # legacy sync for now
-                    income.category = income_cat.name
+                    income.income_category = income_cat
+                    if income_cat:
+                        # legacy sync for now
+                        income.category = income_cat.name
 
-                amount_str = (request.POST.get("amount") or "").strip()
-                if amount_str:
-                    try:
-                        income.amount = Decimal(amount_str)
-                    except (InvalidOperation, ValueError):
-                        pass
+                    amount_str = (request.POST.get("amount") or "").strip()
+                    if amount_str:
+                        try:
+                            income.amount = Decimal(amount_str)
+                        except (InvalidOperation, ValueError):
+                            if is_ajax:
+                                return JsonResponse({
+                                    'error': 'Invalid amount format'
+                                }, status=400)
+                            pass
 
-                taxable = request.POST.get("taxable") == "1"
-                income.taxable = taxable
+                    taxable = request.POST.get("taxable") == "1"
+                    income.taxable = taxable
 
-                income.notes = request.POST.get("notes", "")
+                    income.notes = request.POST.get("notes", "")
 
-                rental_unit_id = (request.POST.get("rental_unit") or "").strip()
-                if rental_unit_id:
-                    income.rental_unit = get_object_or_404(RentalUnit, pk=rental_unit_id)
-                else:
-                    income.rental_unit = None
+                    rental_unit_id = (request.POST.get("rental_unit") or "").strip()
+                    if rental_unit_id:
+                        income.rental_unit = get_object_or_404(RentalUnit, pk=rental_unit_id)
+                    else:
+                        income.rental_unit = None
 
-                bank_account_id = (request.POST.get("bank_account") or "").strip()
-                if bank_account_id:
-                    income.bank_account = get_object_or_404(BankAccount, pk=bank_account_id)
-                else:
-                    income.bank_account = None
+                    bank_account_id = (request.POST.get("bank_account") or "").strip()
+                    if bank_account_id:
+                        income.bank_account = get_object_or_404(BankAccount, pk=bank_account_id)
+                    else:
+                        income.bank_account = None
 
-                income.save()
+                    income.save()
+
+                    if is_ajax:
+                        # Format rental unit display
+                        rental_unit_display = None
+                        if income.rental_unit:
+                            rental_unit_display = f"{income.rental_unit.property.name} — {income.rental_unit.name}"
+
+                        return JsonResponse({
+                            'success': True,
+                            'transaction': {
+                                'id': income.id,
+                                'date': income.date.strftime('%Y-%m-%d'),
+                                'date_display': income.date.strftime('%Y-%m-%d'),
+                                'source_name': income.income_category.name if income.income_category else (income.category or 'Uncategorized'),
+                                'income_category_id': income.income_category.id if income.income_category else '',
+                                'amount': str(income.amount),
+                                'amount_display': f"{income.amount:,.2f}",
+                                'taxable': income.taxable,
+                                'notes': income.notes or '',
+                                'bank_account_id': income.bank_account.id if income.bank_account else '',
+                                'bank_account_name': income.bank_account.name if income.bank_account else '',
+                                'rental_unit_id': income.rental_unit.id if income.rental_unit else '',
+                                'rental_unit_display': rental_unit_display or ''
+                            }
+                        })
+                except Exception as e:
+                    if is_ajax:
+                        return JsonResponse({
+                            'error': f'Error updating income: {str(e)}'
+                        }, status=400)
+                    raise
 
             selected_month_param = f"{income.date.year:04d}-{income.date.month:02d}"
             return redirect(f"/?month={selected_month_param}")
@@ -330,7 +435,7 @@ def dashboard(request):
         # Transfer modal edit/delete
         # -------------------------
         elif "transfer_id" in request.POST:
-            return handle_transfer_edit(request)
+            return handle_transfer_edit(request, is_ajax)
 
         # -------------------------
         # New transaction (Add Transaction form)
@@ -430,7 +535,11 @@ def dashboard(request):
         .prefetch_related("splits")  # Eager load children for display
     )
 
-    total_income = sum(i.amount for i in income_entries)
+    # Exclude Business Reimbursement from totals
+    total_income = sum(
+        i.amount for i in income_entries
+        if not i.income_category or i.income_category.name != 'Business Reimbursement'
+    )
     total_expenses = sum(e.amount for e in expense_entries)
     net_savings = total_income - total_expenses
     total_transfers = sum(t.amount for t in transfer_entries)
@@ -548,75 +657,130 @@ def category_progress(request):
         else:
             return "#dc3545"  # Red - significantly behind
 
-    # ========= EXPENSE PROGRESS =========
-    categories_with_targets = Category.objects.exclude(monthly_limit__isnull=True)
+    # Check if the selected month is a locked close — use snapshots when available
+    month_close_record = MonthEndClose.objects.filter(month=first_day, is_locked=True).first()
 
+    # Pre-compute withholding-funded expense totals per category.
+    # These represent spending from pre-saved buckets, not current cash outflows,
+    # so they must be excluded from the cash flow health calculation.
+    _wf_funded_by_cat = {
+        row['category_id']: row['total']
+        for row in Expense.objects.filter(
+            date__range=(first_day, last_day),
+            withholding_category__isnull=False,
+        ).values('category_id').annotate(total=Sum('amount'))
+    }
+
+    # ========= EXPENSE PROGRESS =========
     expense_summaries = []
     total_expenses_actual = Decimal("0.00")
     total_expenses_remaining = Decimal("0.00")
 
-    for category in categories_with_targets:
-        total_spent = (
-            Expense.objects.filter(category=category, date__range=(first_day, last_day))
-            .aggregate(total=Sum("amount"))["total"]
-            or Decimal("0.00")
-        )
-        percent_used = (
-            total_spent / category.monthly_limit * 100
-            if category.monthly_limit and category.monthly_limit > 0
-            else 0
-        )
+    _expense_snaps = (
+        month_close_record.expense_snapshots.select_related('category').all()
+        if month_close_record else None
+    )
+    if _expense_snaps and _expense_snaps.exists():
+        # Closed month: use frozen snapshot values
+        for snap in _expense_snaps:
+            monthly_limit = snap.monthly_limit
+            total_spent = snap.actual_spent
+            percent_used = float(total_spent / monthly_limit * 100) if monthly_limit > 0 else 0.0
+            if snap.category.name != "Business Expense":
+                wf_funded = _wf_funded_by_cat.get(snap.category_id, Decimal("0.00"))
+                cash_flow_spent = total_spent - wf_funded
+                total_expenses_actual += cash_flow_spent
+                if cash_flow_spent < monthly_limit:
+                    total_expenses_remaining += (monthly_limit - cash_flow_spent)
+            expense_summaries.append({
+                "name": snap.category.name,
+                "target": monthly_limit,
+                "actual": total_spent,
+                "percent": round(percent_used, 1),
+                "bar_color": get_progress_color(percent_used),
+            })
+    else:
+        # Open/current month: use live model values
+        for category in Category.objects.exclude(monthly_limit__isnull=True):
+            total_spent = (
+                Expense.objects.filter(category=category, date__range=(first_day, last_day))
+                .aggregate(total=Sum("amount"))["total"]
+                or Decimal("0.00")
+            )
+            percent_used = (
+                total_spent / category.monthly_limit * 100
+                if category.monthly_limit and category.monthly_limit > 0
+                else 0
+            )
 
-        total_expenses_actual += total_spent
+            # Exclude "Business Expense" from cash flow totals (gets reimbursed)
+            if category.name != "Business Expense":
+                wf_funded = _wf_funded_by_cat.get(category.id, Decimal("0.00"))
+                cash_flow_spent = total_spent - wf_funded
+                total_expenses_actual += cash_flow_spent
+                if cash_flow_spent < category.monthly_limit:
+                    total_expenses_remaining += (category.monthly_limit - cash_flow_spent)
+            else:
+                if total_spent < category.monthly_limit:
+                    pass  # Don't add to total_expenses_remaining
 
-        # Calculate remaining planned expenses for this category
-        if total_spent < category.monthly_limit:
-            total_expenses_remaining += (category.monthly_limit - total_spent)
-
-        expense_summaries.append(
-            {
+            expense_summaries.append({
                 "name": category.name,
                 "target": category.monthly_limit,
                 "actual": total_spent,
                 "percent": round(percent_used, 1),
                 "bar_color": get_progress_color(percent_used),
-            }
-        )
+            })
 
     # ========= INCOME PROGRESS =========
-    income_categories = IncomeCategory.objects.all()
-
     income_summaries = []
     total_income_actual = Decimal("0.00")
     total_income_remaining = Decimal("0.00")
 
-    for inc_cat in income_categories:
-        target = inc_cat.monthly_target or Decimal("0.00")
-
-        total_received = (
-            Income.objects.filter(income_category=inc_cat, date__range=(first_day, last_day))
-            .aggregate(total=Sum("amount"))["total"]
-            or Decimal("0.00")
-        )
-
-        total_income_actual += total_received
-
-        # Calculate remaining expected income
-        if target > 0 and total_received < target:
-            total_income_remaining += (target - total_received)
-
-        percent_received = (total_received / target * 100) if target > 0 else 0
-
-        income_summaries.append(
-            {
+    _income_snaps = (
+        month_close_record.income_snapshots.select_related('income_category').all()
+        if month_close_record else None
+    )
+    if _income_snaps and _income_snaps.exists():
+        # Closed month: use frozen snapshot values
+        for snap in _income_snaps:
+            target = snap.monthly_target
+            total_received = snap.actual_received
+            percent_received = float(total_received / target * 100) if target > 0 else 0.0
+            if snap.income_category.name != "Business Reimbursement":
+                total_income_actual += total_received
+                if target > 0 and total_received < target:
+                    total_income_remaining += (target - total_received)
+            income_summaries.append({
+                "id": snap.income_category.id,
+                "name": snap.income_category.name,
+                "target": target,
+                "actual": total_received,
+                "percent": round(percent_received, 1),
+                "bar_color": get_income_progress_color(percent_received) if target > 0 else "#6c757d",
+            })
+    else:
+        # Open/current month: use live model values
+        for inc_cat in IncomeCategory.objects.all():
+            target = inc_cat.monthly_target or Decimal("0.00")
+            total_received = (
+                Income.objects.filter(income_category=inc_cat, date__range=(first_day, last_day))
+                .aggregate(total=Sum("amount"))["total"]
+                or Decimal("0.00")
+            )
+            if inc_cat.name != "Business Reimbursement":
+                total_income_actual += total_received
+                if target > 0 and total_received < target:
+                    total_income_remaining += (target - total_received)
+            percent_received = (total_received / target * 100) if target > 0 else 0
+            income_summaries.append({
                 "id": inc_cat.id,
                 "name": inc_cat.name,
                 "target": target,
                 "actual": total_received,
                 "percent": round(percent_received, 1),
                 "bar_color": get_income_progress_color(percent_received) if target > 0 else "#6c757d",
-            }
-        )
+            })
 
     income_summaries.sort(key=lambda x: x["name"].lower())
     expense_summaries.sort(key=lambda x: x["name"].lower())
@@ -684,6 +848,17 @@ def category_progress(request):
     # Define which buckets are "true savings" vs "future expenses"
     SAVINGS_BUCKETS = ["vacation", "wedding", "rrsp"]  # Case-insensitive matching
 
+    # Build target overrides from snapshots for closed months
+    _withholding_snaps = (
+        month_close_record.withholding_snapshots.all()
+        if month_close_record else None
+    )
+    withholding_target_overrides = (
+        {snap.withholding_category_id: snap.monthly_target for snap in _withholding_snaps}
+        if _withholding_snaps and _withholding_snaps.exists()
+        else None
+    )
+
     withholding_summaries = []
     total_withholding_remaining = Decimal("0.00")
     total_savings_remaining = Decimal("0.00")
@@ -691,7 +866,13 @@ def category_progress(request):
     total_savings_actual = Decimal("0.00")
 
     for bucket in buckets:
-        monthly_target = bucket.monthly_target or Decimal("0.00")
+        if withholding_target_overrides is not None:
+            # Closed month: only show buckets active at close time; use snapshot target
+            if bucket.id not in withholding_target_overrides:
+                continue
+            monthly_target = withholding_target_overrides[bucket.id]
+        else:
+            monthly_target = bucket.monthly_target or Decimal("0.00")
 
         # Only show buckets with a monthly target > 0
         if monthly_target <= 0:
@@ -825,7 +1006,7 @@ def category_expense_list(request, category_name):
     # Calculate date range based on selection
     if selected_range == "ytd":
         first_day = date(current_year, 1, 1)
-        last_day = today
+        last_day = date(current_year, 12, 31)  # Include future transactions through end of year
     elif selected_range == "12":
         # Last 12 months
         first_day = date(today.year - 1, today.month, 1)
@@ -887,9 +1068,71 @@ def category_expense_list(request, category_name):
         trend_labels.append(m.strftime("%b %Y"))
         trend_values.append(float(total))
 
-    month_rows = list(reversed(month_rows))
+    # Reverse trend data so graph shows oldest on left, newest on right
+    trend_labels = list(reversed(trend_labels))
+    trend_values = list(reversed(trend_values))
+
+    # Keep month_rows in reverse chronological order (newest first) for table display
+    # (Do NOT reverse month_rows - we want newest at top)
 
     range_total = sum((r["total"] for r in month_rows), Decimal("0.00"))
+
+    # Handle expense edit/delete from modal
+    if request.method == "POST":
+        if "expense_id" in request.POST:
+            expense = get_object_or_404(Expense, pk=request.POST["expense_id"])
+            if "delete_expense" in request.POST:
+                expense.delete()
+            else:
+                expense.date = datetime.strptime(request.POST["date"], "%Y-%m-%d").date()
+                expense.vendor_name = request.POST["vendor_name"]
+
+                category_name = request.POST["category"]
+                expense.category = get_object_or_404(Category, name=category_name)
+
+                expense.location = request.POST.get("location", "Ottawa")
+
+                amount_str = (request.POST.get("amount") or "").strip()
+                if amount_str:
+                    try:
+                        expense.amount = Decimal(amount_str)
+                    except (InvalidOperation, ValueError):
+                        pass
+
+                expense.notes = request.POST.get("notes", "")
+
+                # Bank account
+                bank_account_id = (request.POST.get("bank_account") or "").strip()
+                if bank_account_id:
+                    expense.bank_account = get_object_or_404(BankAccount, pk=bank_account_id)
+                else:
+                    expense.bank_account = None
+
+                # Rental + CRA fields
+                rental_unit_id = (request.POST.get("rental_unit") or "").strip()
+                if rental_unit_id:
+                    expense.rental_unit = get_object_or_404(RentalUnit, pk=rental_unit_id)
+                else:
+                    expense.rental_unit = None
+
+                cra_category_id = (request.POST.get("cra_category") or "").strip()
+                if cra_category_id:
+                    expense.cra_category = get_object_or_404(
+                        CRARentalExpenseCategory,
+                        pk=cra_category_id
+                    )
+                else:
+                    expense.cra_category = None
+
+                pct_str = (request.POST.get("rental_business_use_pct") or "").strip()
+                if pct_str:
+                    expense.rental_business_use_pct = Decimal(pct_str)
+                else:
+                    expense.rental_business_use_pct = None
+
+                expense.save()
+
+            return redirect("category_expense_list", category_name=category.name)
 
     context = {
         "category": category,
@@ -901,6 +1144,11 @@ def category_expense_list(request, category_name):
         "trend_labels": trend_labels,
         "trend_values": trend_values,
         "range_total": range_total,
+        # Modal dropdowns
+        "all_categories": Category.objects.all().order_by("name"),
+        "accounts": BankAccount.objects.all().order_by("institution", "name"),
+        "all_rental_units": RentalUnit.objects.select_related("property").order_by("property__name", "name"),
+        "cra_categories": CRARentalExpenseCategory.objects.filter(is_active=True).order_by("sort_order", "name"),
     }
     return render(request, "category_expense_list.html", context)
 
@@ -909,6 +1157,52 @@ def income_category_income_list(request, pk):
     selected_range = request.GET.get("range", "12")  # Default: Last 12 months
 
     inc_cat = get_object_or_404(IncomeCategory, pk=pk)
+
+    # Handle POST request for edit/delete
+    if request.method == "POST":
+        if "income_id" in request.POST:
+            income = get_object_or_404(Income, pk=request.POST["income_id"])
+            if "delete_income" in request.POST:
+                income.delete()
+            else:
+                income.date = datetime.strptime(request.POST["date"], "%Y-%m-%d").date()
+
+                source_id = request.POST.get("source")
+                income_cat_obj = get_object_or_404(IncomeCategory, pk=source_id) if source_id else None
+
+                income.income_category = income_cat_obj
+                if income_cat_obj:
+                    # legacy sync for now
+                    income.category = income_cat_obj.name
+
+                amount_str = (request.POST.get("amount") or "").strip()
+                if amount_str:
+                    try:
+                        income.amount = Decimal(amount_str)
+                    except (InvalidOperation, ValueError):
+                        pass
+
+                taxable = request.POST.get("taxable") == "1"
+                income.taxable = taxable
+
+                income.notes = request.POST.get("notes", "")
+
+                rental_unit_id = (request.POST.get("rental_unit") or "").strip()
+                if rental_unit_id:
+                    income.rental_unit = get_object_or_404(RentalUnit, pk=rental_unit_id)
+                else:
+                    income.rental_unit = None
+
+                bank_account_id = (request.POST.get("bank_account") or "").strip()
+                if bank_account_id:
+                    income.bank_account = get_object_or_404(BankAccount, pk=bank_account_id)
+                else:
+                    income.bank_account = None
+
+                income.save()
+
+            # Redirect back to the same page with the same range parameter
+            return redirect(f"{request.path}?range={selected_range}")
 
     # Build range options
     current_year = today.year
@@ -923,7 +1217,7 @@ def income_category_income_list(request, pk):
     # Calculate date range based on selection
     if selected_range == "ytd":
         first_day = date(current_year, 1, 1)
-        last_day = today
+        last_day = date(current_year, 12, 31)  # Include future transactions through end of year
     elif selected_range == "12":
         # Last 12 months
         first_day = date(today.year - 1, today.month, 1)
@@ -984,7 +1278,12 @@ def income_category_income_list(request, pk):
         trend_labels.append(m.strftime("%b %Y"))
         trend_values.append(float(total))
 
-    month_rows = list(reversed(month_rows))
+    # Reverse trend data so graph shows oldest on left, newest on right
+    trend_labels = list(reversed(trend_labels))
+    trend_values = list(reversed(trend_values))
+
+    # Keep month_rows in reverse chronological order (newest first) for table display
+    # (Do NOT reverse month_rows - we want newest at top)
 
     range_total = sum((r["total"] for r in month_rows), Decimal("0.00"))
 
@@ -998,6 +1297,10 @@ def income_category_income_list(request, pk):
         "trend_labels": trend_labels,
         "trend_values": trend_values,
         "range_total": range_total,
+        # Add context variables for the modal
+        "income_categories": IncomeCategory.objects.all().order_by("name"),
+        "accounts": BankAccount.objects.all().order_by("institution", "name"),
+        "all_rental_units": RentalUnit.objects.select_related("property").order_by("property__name", "name"),
     }
     return render(request, "income_category_income_list.html", context)
 
@@ -1634,6 +1937,21 @@ def rental_tax_summary(request, property_id):
     )
     missing_cra_count = missing_cra_expenses.count()
 
+    # ---- Expenses with CRA category but NO receipts (important for tax audit) ----
+    expenses_missing_receipts = (
+        Expense.objects
+        .filter(
+            rental_unit__property=prop,
+            date__year=year,
+            cra_category__isnull=False,  # Has CRA category (tax-deductible)
+        )
+        .annotate(attachment_count=Count("attachments"))
+        .filter(attachment_count=0)  # But no receipts
+        .select_related("category", "rental_unit", "bank_account", "cra_category")
+        .order_by("-date", "-id")
+    )
+    missing_receipts_count = expenses_missing_receipts.count()
+
     context = {
         "property": prop,
         "year": year,
@@ -1646,8 +1964,490 @@ def rental_tax_summary(request, property_id):
         "total_expenses_personal": total_expenses_personal,
         "missing_cra_count": missing_cra_count,
         "missing_cra_expenses": missing_cra_expenses,
+        "expenses_missing_receipts": expenses_missing_receipts,
+        "missing_receipts_count": missing_receipts_count,
     }
     return render(request, "rental_tax_summary.html", context)
+
+
+def rental_tax_export(request, property_id):
+    """
+    Export a ZIP containing:
+      - An Excel workbook with the CRA Part 3/4 summary + per-transaction breakdown
+      - All expense receipts organized by CRA category folder
+    """
+    import zipfile
+    import os
+    import re
+    from io import BytesIO
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+    from django.http import HttpResponse
+
+    prop = get_object_or_404(RentalProperty, pk=property_id)
+
+    try:
+        year = int(request.GET.get("year") or date.today().year)
+    except ValueError:
+        year = date.today().year
+
+    # ---- Shared ORM expressions (same as tax_summary view) ----
+    pct = Case(
+        When(rental_business_use_pct__isnull=False, then=F("rental_business_use_pct")),
+        default=Value(100),
+        output_field=DecimalField(max_digits=5, decimal_places=2),
+    )
+    rental_portion_expr = ExpressionWrapper(
+        F("amount") * pct / Value(100),
+        output_field=DecimalField(max_digits=12, decimal_places=2),
+    )
+    personal_portion_expr = ExpressionWrapper(
+        F("amount") - (F("amount") * pct / Value(100)),
+        output_field=DecimalField(max_digits=12, decimal_places=2),
+    )
+
+    # Income
+    income_total = (
+        Income.objects
+        .filter(rental_unit__property=prop, date__year=year)
+        .aggregate(total=Sum("amount"))["total"] or Decimal("0.00")
+    )
+
+    # Unit count
+    unit_count = (
+        RentalUnit.objects
+        .filter(property=prop, is_active=True)
+        .exclude(name__icontains="shared")
+        .exclude(name__icontains="common")
+        .count()
+    )
+
+    # Expenses with CRA category
+    expense_qs = (
+        Expense.objects
+        .filter(date__year=year, rental_unit__property=prop, cra_category__isnull=False)
+        .select_related("cra_category", "rental_unit", "category")
+        .prefetch_related("attachments")
+        .order_by("cra_category__sort_order", "cra_category__name", "date")
+    )
+
+    # Aggregate totals by CRA category
+    # Must call .order_by() first to clear the queryset ordering — otherwise Django
+    # includes the order_by fields (e.g. "date") in GROUP BY, splitting rows incorrectly.
+    aggregates = (
+        expense_qs.order_by()
+        .values("cra_category_id")
+        .annotate(
+            total_raw=Sum("amount"),
+            total_rental=Sum(rental_portion_expr),
+            total_personal=Sum(personal_portion_expr),
+        )
+    )
+    agg_map = {row["cra_category_id"]: row for row in aggregates}
+
+    cra_categories = list(
+        CRARentalExpenseCategory.objects.filter(is_active=True).order_by("sort_order", "name")
+    )
+
+    rows = []
+    total_raw = Decimal("0.00")
+    total_rental = Decimal("0.00")
+    total_personal = Decimal("0.00")
+    for cat in cra_categories:
+        data = agg_map.get(cat.id) or {}
+        r = data.get("total_raw") or Decimal("0.00")
+        rn = data.get("total_rental") or Decimal("0.00")
+        rp = data.get("total_personal") or Decimal("0.00")
+        total_raw += r
+        total_rental += rn
+        total_personal += rp
+        rows.append({"cat": cat, "total_raw": r, "total_rental": rn, "total_personal": rp})
+
+    # Group individual expenses by CRA category id
+    expenses_by_cat = defaultdict(list)
+    for exp in expense_qs:
+        expenses_by_cat[exp.cra_category_id].append(exp)
+
+    # ---- Income detail rows ----
+    income_entries = (
+        Income.objects
+        .filter(rental_unit__property=prop, date__year=year)
+        .select_related("income_category", "rental_unit")
+        .order_by("date")
+    )
+
+    # ---- Mortgage data: principal + interest by month ----
+    import calendar as cal_mod
+    mortgages = list(
+        PropertyMortgage.objects
+        .filter(owned_property=prop)
+        .select_related("principal_category", "prepayment_category", "interest_category")
+    )
+    MONTHS = [cal_mod.month_name[m] for m in range(1, 13)]
+
+    mortgage_sections = []
+    for mortgage in mortgages:
+        principal_cats = mortgage.principal_categories()  # list of Category objects
+        interest_cat = mortgage.interest_category
+
+        monthly = []
+        total_principal = Decimal("0.00")
+        total_interest = Decimal("0.00")
+
+        for month_num in range(1, 13):
+            p = Decimal("0.00")
+            i = Decimal("0.00")
+            if principal_cats:
+                p = (
+                    Expense.objects
+                    .filter(category__in=principal_cats, date__year=year, date__month=month_num)
+                    .aggregate(t=Coalesce(Sum("amount"), Decimal("0.00")))["t"]
+                )
+            if interest_cat:
+                i = (
+                    Expense.objects
+                    .filter(category=interest_cat, date__year=year, date__month=month_num)
+                    .aggregate(t=Coalesce(Sum("amount"), Decimal("0.00")))["t"]
+                )
+            total_principal += p
+            total_interest += i
+            monthly.append({"month": MONTHS[month_num - 1], "principal": p, "interest": i, "total": p + i})
+
+        mortgage_sections.append({
+            "mortgage": mortgage,
+            "monthly": monthly,
+            "total_principal": total_principal,
+            "total_interest": total_interest,
+            "total": total_principal + total_interest,
+        })
+
+    generated_at = datetime.now()
+    generated_str = generated_at.strftime("%Y-%m-%d %H:%M")
+    generated_slug = generated_at.strftime("%Y%m%d_%H%M%S")
+
+    # ------------------------------------------------------------------ #
+    #  BUILD EXCEL                                                         #
+    # ------------------------------------------------------------------ #
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = f"Tax Summary {year}"
+
+    # Styles
+    def h1(text):
+        return Font(bold=True, size=14)
+
+    def h2():
+        return Font(bold=True, size=11, color="FFFFFF")
+
+    green_fill = PatternFill("solid", fgColor="1F7A4F")
+    red_fill   = PatternFill("solid", fgColor="C0392B")
+    gray_fill  = PatternFill("solid", fgColor="D9D9D9")
+    sub_fill   = PatternFill("solid", fgColor="F2F2F2")
+    total_fill = PatternFill("solid", fgColor="BDD7EE")
+    thin_side  = Side(style="thin")
+    thin_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
+
+    col_widths = [40, 18, 25, 25, 20, 20, 30]
+    for i, w in enumerate(col_widths, 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    row = 1
+
+    def write_row(values, fill=None, bold=False, row_num=None):
+        r = row_num or row
+        for col, val in enumerate(values, 1):
+            cell = ws.cell(row=r, column=col, value=val)
+            cell.border = thin_border
+            cell.alignment = Alignment(wrap_text=False, vertical="center")
+            if fill:
+                cell.fill = fill
+            if bold:
+                cell.font = Font(bold=True)
+            if isinstance(val, Decimal):
+                cell.value = float(val)
+                cell.number_format = '"$"#,##0.00'
+        return r
+
+    # Title
+    ws.merge_cells(f"A{row}:G{row}")
+    title_cell = ws.cell(row=row, column=1, value=f"Rental Tax Summary — {prop.name} — {year}")
+    title_cell.font = Font(bold=True, size=15)
+    title_cell.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[row].height = 24
+    row += 1
+
+    ws.merge_cells(f"A{row}:G{row}")
+    gen_cell = ws.cell(row=row, column=1, value=f"Generated: {generated_str}")
+    gen_cell.font = Font(italic=True, size=10, color="888888")
+    gen_cell.alignment = Alignment(horizontal="center", vertical="center")
+    row += 2
+
+    blue_fill   = PatternFill("solid", fgColor="1A5276")
+
+    # ---- Part 3: Income ----
+    ws.merge_cells(f"A{row}:G{row}")
+    c = ws.cell(row=row, column=1, value="PART 3 — INCOME")
+    c.font = h2()
+    c.fill = green_fill
+    c.alignment = Alignment(horizontal="left", vertical="center")
+    ws.row_dimensions[row].height = 20
+    row += 1
+
+    write_row(["Property", prop.name, "", "", "", "", ""], fill=sub_fill, row_num=row); row += 1
+    write_row(["Number of rentable units", unit_count, "", "", "", "", ""], fill=sub_fill, row_num=row); row += 1
+    write_row(["Gross rental income", income_total, "", "", "", "", ""], fill=sub_fill, bold=True, row_num=row); row += 1
+    row += 1
+
+    # Income transaction detail
+    inc_headers = ["Date", "Income Category", "Rental Unit", "Amount", "Taxable", "Notes", ""]
+    for col, h in enumerate(inc_headers[:6], 1):
+        cell = ws.cell(row=row, column=col, value=h)
+        cell.font = Font(bold=True)
+        cell.fill = gray_fill
+        cell.border = thin_border
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+    row += 1
+
+    income_year_total = Decimal("0.00")
+    for entry in income_entries:
+        cat_name = entry.income_category.name if entry.income_category else (entry.category or "—")
+        unit_name = entry.rental_unit.name if entry.rental_unit else "—"
+        income_year_total += entry.amount
+        values = [
+            entry.date.strftime("%Y-%m-%d"),
+            cat_name,
+            unit_name,
+            float(entry.amount),
+            "Yes" if entry.taxable else "No",
+            entry.notes or "",
+            "",
+        ]
+        for col, val in enumerate(values, 1):
+            cell = ws.cell(row=row, column=col, value=val)
+            cell.border = thin_border
+            if col == 4:
+                cell.number_format = '"$"#,##0.00'
+        row += 1
+
+    # Income total row
+    for col, val in [(1, "Total Income"), (4, float(income_year_total))]:
+        cell = ws.cell(row=row, column=col, value=val)
+        cell.font = Font(bold=True)
+        cell.fill = total_fill
+        cell.border = thin_border
+        if col == 4:
+            cell.number_format = '"$"#,##0.00'
+    row += 2
+
+    # ---- Mortgage Payments ----
+    if mortgage_sections:
+        ws.merge_cells(f"A{row}:G{row}")
+        c = ws.cell(row=row, column=1, value="MORTGAGE PAYMENTS")
+        c.font = h2()
+        c.fill = blue_fill
+        c.alignment = Alignment(horizontal="left", vertical="center")
+        ws.row_dimensions[row].height = 20
+        row += 1
+
+        for ms in mortgage_sections:
+            m = ms["mortgage"]
+            label = m.name
+            if m.lender_name:
+                label = f"{m.lender_name} — {label}"
+
+            # Mortgage name sub-header
+            ws.merge_cells(f"A{row}:G{row}")
+            c = ws.cell(row=row, column=1, value=label)
+            c.font = Font(bold=True, color="FFFFFF")
+            c.fill = PatternFill("solid", fgColor="555555")
+            c.alignment = Alignment(horizontal="left", vertical="center")
+            ws.row_dimensions[row].height = 18
+            row += 1
+
+            mort_headers = ["Month", "Principal", "Interest", "Total Payment", "", "", ""]
+            for col, h in enumerate(mort_headers[:4], 1):
+                cell = ws.cell(row=row, column=col, value=h)
+                cell.font = Font(bold=True)
+                cell.fill = gray_fill
+                cell.border = thin_border
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+            row += 1
+
+            for mrow in ms["monthly"]:
+                # Skip months with no activity
+                if mrow["total"] == Decimal("0.00"):
+                    continue
+                for col, val in [(1, mrow["month"]), (2, float(mrow["principal"])),
+                                 (3, float(mrow["interest"])), (4, float(mrow["total"]))]:
+                    cell = ws.cell(row=row, column=col, value=val)
+                    cell.border = thin_border
+                    if col > 1:
+                        cell.number_format = '"$"#,##0.00'
+                row += 1
+
+            # Annual totals
+            for col, val in [(1, f"Annual Total — {m.name}"),
+                             (2, float(ms["total_principal"])),
+                             (3, float(ms["total_interest"])),
+                             (4, float(ms["total"]))]:
+                cell = ws.cell(row=row, column=col, value=val)
+                cell.font = Font(bold=True)
+                cell.fill = total_fill
+                cell.border = thin_border
+                if col > 1:
+                    cell.number_format = '"$"#,##0.00'
+            row += 2
+
+    # ---- Part 4: Summary table ----
+    ws.merge_cells(f"A{row}:G{row}")
+    c = ws.cell(row=row, column=1, value="PART 4 — EXPENSES SUMMARY")
+    c.font = h2()
+    c.fill = red_fill
+    c.alignment = Alignment(horizontal="left", vertical="center")
+    ws.row_dimensions[row].height = 20
+    row += 1
+
+    # Header row
+    headers = ["CRA Expense Category", "Total Expenses", "Personal Portion", "Rental Portion", "", "", ""]
+    for col, val in enumerate(headers[:4], 1):
+        cell = ws.cell(row=row, column=col, value=val)
+        cell.font = Font(bold=True)
+        cell.fill = gray_fill
+        cell.border = thin_border
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+    row += 1
+
+    for r in rows:
+        ws.cell(row=row, column=1, value=r["cat"].name).border = thin_border
+        for col, val in [(2, r["total_raw"]), (3, r["total_personal"]), (4, r["total_rental"])]:
+            cell = ws.cell(row=row, column=col, value=float(val))
+            cell.number_format = '"$"#,##0.00'
+            cell.border = thin_border
+        row += 1
+
+    # Totals row
+    for col, val in [(1, "TOTAL"), (2, total_raw), (3, total_personal), (4, total_rental)]:
+        cell = ws.cell(row=row, column=col, value=val if col == 1 else float(val))
+        cell.font = Font(bold=True)
+        cell.fill = total_fill
+        cell.border = thin_border
+        if col > 1:
+            cell.number_format = '"$"#,##0.00'
+    row += 2
+
+    # ---- Per-category transaction breakdown ----
+    ws.merge_cells(f"A{row}:G{row}")
+    c = ws.cell(row=row, column=1, value="PART 4 — TRANSACTION DETAIL BY CATEGORY")
+    c.font = h2()
+    c.fill = red_fill
+    c.alignment = Alignment(horizontal="left", vertical="center")
+    ws.row_dimensions[row].height = 20
+    row += 1
+
+    txn_headers = ["Date", "Vendor", "Category (internal)", "Rental Unit", "Amount", "Rental Portion", "Notes"]
+    for cat_row in rows:
+        cat = cat_row["cat"]
+        expenses = expenses_by_cat.get(cat.id, [])
+        if not expenses:
+            continue
+
+        # Category sub-header
+        ws.merge_cells(f"A{row}:G{row}")
+        c = ws.cell(row=row, column=1, value=cat.name)
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = PatternFill("solid", fgColor="555555")
+        c.alignment = Alignment(horizontal="left", vertical="center")
+        ws.row_dimensions[row].height = 18
+        row += 1
+
+        # Column headers
+        for col, h in enumerate(txn_headers, 1):
+            cell = ws.cell(row=row, column=col, value=h)
+            cell.font = Font(bold=True)
+            cell.fill = gray_fill
+            cell.border = thin_border
+            cell.alignment = Alignment(horizontal="center")
+        row += 1
+
+        cat_total_raw = Decimal("0.00")
+        cat_total_rental = Decimal("0.00")
+        for exp in expenses:
+            pct_val = exp.rental_business_use_pct if exp.rental_business_use_pct is not None else Decimal("100")
+            rental_amt = (exp.amount * pct_val / 100).quantize(Decimal("0.01"))
+            cat_total_raw += exp.amount
+            cat_total_rental += rental_amt
+
+            values = [
+                exp.date.strftime("%Y-%m-%d"),
+                exp.vendor_name,
+                exp.category.name if exp.category else "",
+                exp.rental_unit.name if exp.rental_unit else "",
+                float(exp.amount),
+                float(rental_amt),
+                exp.notes or "",
+            ]
+            for col, val in enumerate(values, 1):
+                cell = ws.cell(row=row, column=col, value=val)
+                cell.border = thin_border
+                if col in (5, 6):
+                    cell.number_format = '"$"#,##0.00'
+            row += 1
+
+        # Category subtotal
+        for col, val in [(1, f"Subtotal — {cat.name}"), (5, float(cat_total_raw)), (6, float(cat_total_rental))]:
+            cell = ws.cell(row=row, column=col, value=val)
+            cell.font = Font(bold=True)
+            cell.fill = sub_fill
+            cell.border = thin_border
+            if col in (5, 6):
+                cell.number_format = '"$"#,##0.00'
+        row += 2
+
+    # Save workbook to bytes
+    xlsx_buf = BytesIO()
+    wb.save(xlsx_buf)
+    xlsx_bytes = xlsx_buf.getvalue()
+
+    # ------------------------------------------------------------------ #
+    #  BUILD ZIP                                                           #
+    # ------------------------------------------------------------------ #
+    def safe_folder(name):
+        return re.sub(r'[\\/:*?"<>|]', '_', name).strip()
+
+    zip_buf = BytesIO()
+    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        # Excel file
+        safe_prop = safe_folder(prop.name)
+        zf.writestr(f"Tax_Summary_{safe_prop}_{year}_{generated_slug}.xlsx", xlsx_bytes)
+
+        # Receipts organized by CRA category
+        for cat_row in rows:
+            cat = cat_row["cat"]
+            expenses = expenses_by_cat.get(cat.id, [])
+            for exp in expenses:
+                for attachment in exp.attachments.all():
+                    file_path = os.path.join(settings.MEDIA_ROOT, attachment.file.name)
+                    if not os.path.exists(file_path):
+                        continue
+                    _, ext = os.path.splitext(attachment.file.name)
+                    receipt_name = (
+                        f"{exp.date.strftime('%Y-%m-%d')}_"
+                        f"{safe_folder(exp.vendor_name)}_"
+                        f"${exp.amount:.2f}{ext}"
+                    )
+                    zip_path = f"receipts/{safe_folder(cat.name)}/{receipt_name}"
+                    with open(file_path, "rb") as fh:
+                        zf.writestr(zip_path, fh.read())
+
+    zip_bytes = zip_buf.getvalue()
+
+    response = HttpResponse(zip_bytes, content_type="application/zip")
+    response["Content-Disposition"] = (
+        f'attachment; filename="TaxExport_{safe_folder(prop.name)}_{year}_{generated_slug}.zip"'
+    )
+    return response
+
 
 def rental_tax_category_detail(request, property_id, cra_category_id):
     prop = get_object_or_404(RentalProperty, pk=property_id)
@@ -1658,6 +2458,59 @@ def rental_tax_category_detail(request, property_id, cra_category_id):
     except ValueError:
         year = date.today().year
 
+    # POST: Handle edit/delete
+    if request.method == "POST":
+        expense_id = request.POST.get("expense_id")
+        if expense_id:
+            exp_obj = get_object_or_404(Expense, pk=expense_id)
+
+            # Delete if requested
+            if request.POST.get("delete_expense"):
+                exp_obj.delete()
+                return redirect(f"{reverse('rental_tax_category_detail', args=[property_id, cra_category_id])}?year={year}")
+
+            # Otherwise, update
+            exp_obj.date = request.POST.get("date") or exp_obj.date
+            exp_obj.vendor_name = request.POST.get("vendor_name") or ""
+            exp_obj.location = request.POST.get("location") or ""
+            exp_obj.notes = request.POST.get("notes") or ""
+
+            try:
+                exp_obj.amount = Decimal(request.POST.get("amount", "0"))
+            except (ValueError, InvalidOperation):
+                pass
+
+            # Category
+            cat_name = request.POST.get("category", "").strip()
+            if cat_name:
+                cat_obj, _ = Category.objects.get_or_create(name=cat_name)
+                exp_obj.category = cat_obj
+
+            # Bank account
+            ba_id = request.POST.get("bank_account")
+            if ba_id:
+                exp_obj.bank_account = BankAccount.objects.get(pk=ba_id)
+            else:
+                exp_obj.bank_account = None
+
+            # Rental unit
+            ru_id = request.POST.get("rental_unit")
+            if ru_id:
+                exp_obj.rental_unit = RentalUnit.objects.get(pk=ru_id)
+            else:
+                exp_obj.rental_unit = None
+
+            # CRA category
+            cra_id = request.POST.get("cra_category")
+            if cra_id:
+                exp_obj.cra_category = CRARentalExpenseCategory.objects.get(pk=cra_id)
+            else:
+                exp_obj.cra_category = None
+
+            exp_obj.save()
+            return redirect(f"{reverse('rental_tax_category_detail', args=[property_id, cra_category_id])}?year={year}")
+
+    # GET: Display expenses
     qs = (
         Expense.objects
         .filter(
@@ -1666,6 +2519,7 @@ def rental_tax_category_detail(request, property_id, cra_category_id):
             cra_category=cra_cat,
         )
         .select_related("rental_unit", "category", "bank_account")
+        .prefetch_related("attachments")
         .order_by("-date", "-id")
     )
 
@@ -1689,11 +2543,21 @@ def rental_tax_category_detail(request, property_id, cra_category_id):
         personal_portion=personal_portion_expr,
     )
 
+    # Context for modal form
+    all_categories = Category.objects.all().order_by("name")
+    accounts = BankAccount.objects.all().order_by("name")
+    all_rental_units = RentalUnit.objects.select_related("property").all().order_by("property__name", "name")
+    cra_categories = CRARentalExpenseCategory.objects.filter(is_active=True).order_by("sort_order", "name")
+
     context = {
         "property": prop,
         "cra_category": cra_cat,
         "year": year,
         "expenses": qs,
+        "all_categories": all_categories,
+        "accounts": accounts,
+        "all_rental_units": all_rental_units,
+        "cra_categories": cra_categories,
     }
     return render(request, "rental_tax_category_detail.html", context)
 
@@ -1846,27 +2710,36 @@ def bank_account_detail(request, account_id):
     """
     Per-account ledger view.
 
-    Shows, for a given BankAccount in the selected month:
-      - All incomes into this account
-      - All expenses out of this account
-      - All transfers where this account is either the source or destination
+    Shows transactions for this account with running balance.
+    Defaults to last 12 months, grouped by month.
     """
     account = get_object_or_404(BankAccount, pk=account_id)
 
-    # --- Month selection (same pattern as dashboard / withholdings) ---
+    # --- Date range selection ---
     today = date.today()
-    selected_month_str = request.GET.get("month", today.strftime("%Y-%m"))
 
-    try:
-        year, month = map(int, selected_month_str.split("-"))
-    except ValueError:
-        year, month = today.year, today.month
+    # Default to last 12 months
+    default_start = date(today.year - 1, today.month, 1)
+    default_end = date(today.year, today.month, monthrange(today.year, today.month)[1])
 
-    first_day = date(year, month, 1)
-    last_day = date(year, month, monthrange(year, month)[1])
-    selected_month_display = first_day.strftime("%B %Y")
+    # Allow override via query params
+    start_date_str = request.GET.get("start_date")
+    end_date_str = request.GET.get("end_date")
 
-    # --- Pull incomes and expenses for this account & month ---
+    if start_date_str and end_date_str:
+        try:
+            first_day = datetime.strptime(start_date_str, "%Y-%m-%d").date()
+            last_day = datetime.strptime(end_date_str, "%Y-%m-%d").date()
+        except ValueError:
+            first_day = default_start
+            last_day = default_end
+    else:
+        first_day = default_start
+        last_day = default_end
+
+    date_range_display = f"{first_day.strftime('%b %Y')} - {last_day.strftime('%b %Y')}"
+
+    # --- Pull all transactions for this account in date range ---
     income_qs = (
         account.incomes.filter(date__range=(first_day, last_day))
         .select_related("income_category", "rental_unit")
@@ -1879,7 +2752,6 @@ def bank_account_detail(request, account_id):
         .order_by("date", "id")
     )
 
-    # --- Pull transfers involving this account & month ---
     incoming_transfers = (
         account.incoming_transfers.filter(date__range=(first_day, last_day))
         .select_related("from_account", "to_account", "withholding_category")
@@ -1889,6 +2761,12 @@ def bank_account_detail(request, account_id):
     outgoing_transfers = (
         account.outgoing_transfers.filter(date__range=(first_day, last_day))
         .select_related("from_account", "to_account", "withholding_category")
+        .order_by("date", "id")
+    )
+
+    # Balance adjustments
+    balance_adjustments = (
+        account.balance_adjustments.filter(date__range=(first_day, last_day))
         .order_by("date", "id")
     )
 
@@ -1920,6 +2798,7 @@ def bank_account_detail(request, account_id):
                 "income_id": inc.id,
                 "expense_id": None,
                 "transfer_id": None,
+                "adjustment_id": None,
             }
         )
 
@@ -1948,6 +2827,7 @@ def bank_account_detail(request, account_id):
                 "income_id": None,
                 "expense_id": exp.id,
                 "transfer_id": None,
+                "adjustment_id": None,
             }
         )
 
@@ -1980,6 +2860,7 @@ def bank_account_detail(request, account_id):
                 "income_id": None,
                 "expense_id": None,
                 "transfer_id": tr.id,
+                "adjustment_id": None,
             }
         )
 
@@ -2012,17 +2893,92 @@ def bank_account_detail(request, account_id):
                 "income_id": None,
                 "expense_id": None,
                 "transfer_id": tr.id,
+                "adjustment_id": None,
             }
         )
 
-    # Sort chronologically; within a day, group income, then transfers, then expenses
+    # Balance adjustments
+    for adj in balance_adjustments:
+        entries.append(
+            {
+                "date": adj.date,
+                "kind": "adjustment",
+                "is_inflow": adj.amount >= 0,
+                "raw_amount": abs(adj.amount),
+                "signed_amount": adj.amount,
+                "description": f"Balance Adjustment: {adj.reason}",
+                "notes": adj.notes,
+                "income_id": None,
+                "expense_id": None,
+                "transfer_id": None,
+                "adjustment_id": adj.id,
+            }
+        )
+
+    # Sort chronologically (oldest first for balance calculation)
     def sort_key(e):
-        kind_order = {"income": 0, "transfer": 1, "expense": 2}
+        kind_order = {"income": 0, "transfer": 1, "expense": 2, "adjustment": 3}
         return (e["date"], kind_order.get(e["kind"], 99))
 
-    entries.sort(key=sort_key)
+    entries.sort(key=sort_key)  # Oldest first for running balance
 
-    # --- Summaries ---
+    # --- Calculate running balance ---
+    # For balance tracking: use February 2026 snapshot as the baseline
+    if account.balance_tracking_enabled and account.balance_tracking_start_date:
+        # Get the February 2026 snapshot (the baseline for balance tracking)
+        from home.models import MonthEndClose, AccountSnapshot
+        tracking_start = account.balance_tracking_start_date
+        prev_month = tracking_start.replace(day=1) - timedelta(days=1)
+        prev_month_first = prev_month.replace(day=1)
+
+        try:
+            month_close = MonthEndClose.objects.get(month=prev_month_first, is_locked=True)
+            snapshot = AccountSnapshot.objects.get(month_close=month_close, bank_account=account)
+            baseline_balance = snapshot.balance
+        except (MonthEndClose.DoesNotExist, AccountSnapshot.DoesNotExist):
+            # Fallback if no snapshot found
+            baseline_balance = account.current_balance
+
+        # The baseline is the balance BEFORE the tracking start date
+        # So we use it as the starting point for all balance calculations
+        starting_balance = baseline_balance
+    else:
+        starting_balance = account.current_balance
+
+    # Calculate running balance for each entry (only for tracked period)
+    running_balance = starting_balance
+    for entry in entries:
+        if account.balance_tracking_enabled and account.balance_tracking_start_date:
+            if entry["date"] >= account.balance_tracking_start_date:
+                running_balance += entry["signed_amount"]
+                entry["balance"] = running_balance
+            else:
+                entry["balance"] = None  # No balance for pre-tracking transactions
+        else:
+            running_balance += entry["signed_amount"]
+            entry["balance"] = running_balance
+
+    # Group entries by month for display (still in chronological order)
+    from itertools import groupby
+    entries_by_month = []
+    for month_key, month_entries in groupby(entries, key=lambda e: e["date"].strftime("%Y-%m")):
+        month_entries_list = list(month_entries)
+        month_date = datetime.strptime(month_key, "%Y-%m").date()
+        entries_by_month.append({
+            "month": month_date.strftime("%B %Y"),
+            "month_key": month_key,
+            "entries": month_entries_list,
+            "month_inflow": sum(e["raw_amount"] for e in month_entries_list if e["is_inflow"]),
+            "month_outflow": sum(e["raw_amount"] for e in month_entries_list if not e["is_inflow"]),
+            "month_net": sum(e["signed_amount"] for e in month_entries_list),
+        })
+
+    # Now reverse everything to show most recent month first (with most recent transactions first within each month)
+    entries_by_month.reverse()
+    for month_group in entries_by_month:
+        month_group["entries"].reverse()
+
+    # --- Overall summaries ---
     total_inflow = sum(e["raw_amount"] for e in entries if e["is_inflow"])
     total_outflow = sum(e["raw_amount"] for e in entries if not e["is_inflow"])
     net_change = sum(e["signed_amount"] for e in entries)
@@ -2032,17 +2988,88 @@ def bank_account_detail(request, account_id):
     total_outflow = total_outflow or Decimal("0.00")
     net_change = net_change or Decimal("0.00")
 
+    # Ending balance is the balance after the last tracked transaction in the period
+    # Find the last entry with a balance (in reverse order since entries are now most recent first)
+    ending_balance = account.current_balance
+    for entry in entries:
+        if entry.get("balance") is not None:
+            ending_balance = entry["balance"]
+            break  # Found the most recent entry with a balance
+
     context = {
         "account": account,
-        "entries": entries,
-        "selected_month": f"{year:04d}-{month:02d}",
-        "selected_month_display": selected_month_display,
+        "entries_by_month": entries_by_month,
+        "start_date": first_day,
+        "end_date": last_day,
+        "date_range_display": date_range_display,
+        "starting_balance": starting_balance,
+        "ending_balance": ending_balance,
         "total_inflow": total_inflow,
         "total_outflow": total_outflow,
         "net_change": net_change,
     }
 
     return render(request, "bank_account_detail.html", context)
+
+
+@require_POST
+def create_balance_adjustment(request, account_id):
+    """
+    Create a manual balance adjustment for an account.
+
+    Used for bank reconciliation when there are differences between
+    the tracked balance and the actual bank statement (e.g., bank fees,
+    interest earned, or other items not recorded as transactions).
+    """
+    account = get_object_or_404(BankAccount, pk=account_id)
+
+    try:
+        # Parse form data
+        adjustment_date = request.POST.get('adjustment_date')
+        amount = request.POST.get('amount')
+        reason = request.POST.get('reason', '')
+        notes = request.POST.get('notes', '')
+
+        # Validate required fields
+        if not adjustment_date or not amount:
+            messages.error(request, "Date and amount are required.")
+            return redirect('bank_account_detail', account_id=account_id)
+
+        # Parse date
+        try:
+            parsed_date = datetime.strptime(adjustment_date, '%Y-%m-%d').date()
+        except ValueError:
+            messages.error(request, "Invalid date format. Use YYYY-MM-DD.")
+            return redirect('bank_account_detail', account_id=account_id)
+
+        # Parse amount
+        try:
+            parsed_amount = Decimal(amount)
+        except (InvalidOperation, ValueError):
+            messages.error(request, "Invalid amount.")
+            return redirect('bank_account_detail', account_id=account_id)
+
+        # Create the adjustment
+        adjustment = BalanceAdjustment.objects.create(
+            bank_account=account,
+            date=parsed_date,
+            amount=parsed_amount,
+            reason=reason or 'Manual adjustment',
+            notes=notes,
+            created_by=request.user.username if request.user.is_authenticated else 'System'
+        )
+
+        sign = '+' if parsed_amount >= 0 else ''
+        messages.success(
+            request,
+            f"Balance adjustment created: {sign}${parsed_amount} on {parsed_date} ({reason})"
+        )
+
+    except Exception as e:
+        messages.error(request, f"Error creating balance adjustment: {str(e)}")
+
+    return redirect('bank_account_detail', account_id=account_id)
+
 
 @require_http_methods(["GET", "POST"])
 def unassigned_transactions(request):
@@ -3151,6 +4178,45 @@ def withholding_overview(request):
     - Transfers linked to a withholding bucket
     - Expenses funded from a withholding bucket
     """
+    # Handle POST - Create new bucket
+    if request.method == "POST":
+        action = request.POST.get("action")
+        if action == "create_bucket":
+            account_id = request.POST.get("account")
+            name = request.POST.get("name", "").strip()
+            monthly_target = request.POST.get("monthly_target", "").strip()
+            target_amount = request.POST.get("target_amount", "").strip()
+            next_due_date = request.POST.get("next_due_date", "").strip()
+
+            if account_id and name:
+                try:
+                    account = BankAccount.objects.get(id=account_id, is_withholding_account=True)
+
+                    # Create the bucket
+                    bucket = WithholdingCategory(
+                        account=account,
+                        name=name,
+                    )
+
+                    # Set optional fields
+                    if monthly_target:
+                        bucket.monthly_target = Decimal(monthly_target)
+                    if target_amount:
+                        bucket.target_amount = Decimal(target_amount)
+                    if next_due_date:
+                        bucket.next_due_date = next_due_date
+
+                    bucket.save()
+                    messages.success(request, f"Created new bucket: {name}")
+                    return redirect("withholding_overview")
+
+                except BankAccount.DoesNotExist:
+                    messages.error(request, "Invalid withholding account selected.")
+                except Exception as e:
+                    messages.error(request, f"Error creating bucket: {str(e)}")
+            else:
+                messages.error(request, "Account and bucket name are required.")
+
     # Determine selected month
     today = date.today()
     month_param = (request.GET.get("month") or "").strip()
@@ -3184,6 +4250,12 @@ def withholding_overview(request):
             if bucket.id is not None:
                 bucket_ids.append(bucket.id)
 
+    # Get withholding accounts for the modal dropdown
+    withholding_accounts = BankAccount.objects.filter(
+        is_withholding_account=True,
+        is_active=True
+    ).order_by("name")
+
     if not bucket_ids:
         return render(
             request,
@@ -3192,6 +4264,7 @@ def withholding_overview(request):
                 "accounts": accounts,
                 "selected_month": selected_month,
                 "selected_month_display": selected_month_display,
+                "withholding_accounts": withholding_accounts,
             },
         )
 
@@ -3356,6 +4429,7 @@ def withholding_overview(request):
             "accounts": accounts,
             "selected_month": selected_month,
             "selected_month_display": selected_month_display,
+            "withholding_accounts": withholding_accounts,
         },
     )
 
@@ -3364,11 +4438,125 @@ def withholding_overview(request):
 def withholding_category_detail(request, pk):
     """
     Detail view for a single withholding bucket with date range filtering.
+    Supports inline editing of expenses and transfers.
     """
     category = get_object_or_404(
         WithholdingCategory.objects.select_related("account"),
         pk=pk,
     )
+
+    # Handle POST requests for editing/deleting expenses and transfers
+    if request.method == "POST":
+        # Handle expense edit/delete
+        if "expense_id" in request.POST:
+            expense_id = request.POST.get("expense_id")
+            expense = get_object_or_404(Expense, pk=expense_id)
+
+            if request.POST.get("delete_expense") == "1":
+                expense.delete()
+                messages.success(request, "Expense deleted successfully.")
+                return redirect("withholding_category_detail", pk=pk)
+
+            # Update expense fields
+            date_str = request.POST.get("date")
+            if date_str:
+                try:
+                    expense.date = datetime.strptime(date_str, "%Y-%m-%d").date()
+                except ValueError:
+                    pass
+
+            expense.vendor_name = request.POST.get("vendor_name", "")
+            expense.location = request.POST.get("location", "")
+            expense.notes = request.POST.get("notes", "")
+
+            amount_str = request.POST.get("amount")
+            if amount_str:
+                try:
+                    expense.amount = Decimal(amount_str)
+                except (ValueError, InvalidOperation):
+                    pass
+
+            # Category
+            category_name = request.POST.get("category")
+            if category_name:
+                cat, _ = Category.objects.get_or_create(name=category_name)
+                expense.category = cat
+
+            # Bank account
+            bank_account_id = request.POST.get("bank_account")
+            if bank_account_id:
+                expense.bank_account_id = bank_account_id
+            else:
+                expense.bank_account = None
+
+            # Rental unit
+            rental_unit_id = request.POST.get("rental_unit")
+            if rental_unit_id:
+                expense.rental_unit_id = rental_unit_id
+            else:
+                expense.rental_unit = None
+
+            # CRA category
+            cra_category_id = request.POST.get("cra_category")
+            if cra_category_id:
+                expense.cra_category_id = cra_category_id
+            else:
+                expense.cra_category = None
+
+            expense.save()
+            messages.success(request, "Expense updated successfully.")
+            return redirect("withholding_category_detail", pk=pk)
+
+        # Handle transfer edit/delete
+        elif "transfer_id" in request.POST:
+            transfer_id = request.POST.get("transfer_id")
+            transfer = get_object_or_404(Transfer, pk=transfer_id)
+
+            if request.POST.get("delete_transfer") == "1":
+                transfer.delete()
+                messages.success(request, "Transfer deleted successfully.")
+                return redirect("withholding_category_detail", pk=pk)
+
+            # Update transfer fields
+            date_str = request.POST.get("date")
+            if date_str:
+                try:
+                    transfer.date = datetime.strptime(date_str, "%Y-%m-%d").date()
+                except ValueError:
+                    pass
+
+            amount_str = request.POST.get("amount")
+            if amount_str:
+                try:
+                    transfer.amount = Decimal(amount_str)
+                except (ValueError, InvalidOperation):
+                    pass
+
+            # From/To accounts
+            from_account_id = request.POST.get("from_account")
+            if from_account_id:
+                transfer.from_account_id = from_account_id
+            else:
+                transfer.from_account = None
+
+            to_account_id = request.POST.get("to_account")
+            if to_account_id:
+                transfer.to_account_id = to_account_id
+            else:
+                transfer.to_account = None
+
+            # Withholding category
+            withholding_category_id = request.POST.get("withholding_category")
+            if withholding_category_id:
+                transfer.withholding_category_id = withholding_category_id
+            else:
+                transfer.withholding_category = None
+
+            transfer.notes = request.POST.get("notes", "")
+
+            transfer.save()
+            messages.success(request, "Transfer updated successfully.")
+            return redirect("withholding_category_detail", pk=pk)
 
     # ---------- Date Range Selection ----------
     today = date.today()
@@ -3387,7 +4575,7 @@ def withholding_category_detail(request, pk):
     # Calculate date range based on selection
     if selected_range == "ytd":
         first_day = date(current_year, 1, 1)
-        last_day = today
+        last_day = date(current_year, 12, 31)  # Include future transactions through end of year
     elif selected_range == "12":
         # Last 12 months
         first_day = date(today.year - 1, today.month, 1)
@@ -3421,7 +4609,7 @@ def withholding_category_detail(request, pk):
             withholding_category=category,
             date__range=(first_day, last_day)
         )
-        .select_related("category")
+        .select_related("category", "bank_account", "rental_unit", "cra_category")
         .order_by("date", "id")
     )
 
@@ -3466,6 +4654,23 @@ def withholding_category_detail(request, pk):
 
         # Expense funded from bucket always reduces it
         signed = -e.amount
+
+        # Prepare expense data for JavaScript
+        import json
+        expense_data = {
+            'id': e.id,
+            'date': e.date.strftime('%Y-%m-%d'),
+            'vendor_name': e.vendor_name or '',
+            'category_name': e.category.name if e.category else '',
+            'location': e.location or '',
+            'amount': str(e.amount),
+            'notes': e.notes or '',
+            'rental_unit_id': e.rental_unit_id or '',
+            'cra_category_id': e.cra_category_id or '',
+            'rental_business_use_pct': str(e.rental_business_use_pct) if e.rental_business_use_pct else '',
+            'bank_account_id': e.bank_account_id or '',
+        }
+
         derived_events.append(
             {
                 "kind": "expense",
@@ -3474,6 +4679,7 @@ def withholding_category_detail(request, pk):
                 "description": desc,
                 "transfer_id": None,
                 "expense_id": e.id,
+                "expense_obj": json.dumps(expense_data),
             }
         )
 
@@ -3484,17 +4690,19 @@ def withholding_category_detail(request, pk):
     derived_rows_chron = []
     for ev in derived_events:
         derived_running += ev["signed_amount"]
-        derived_rows_chron.append(
-            {
-                "date": ev["date"],
-                "kind": ev["kind"],
-                "description": ev["description"],
-                "signed_amount": ev["signed_amount"],
-                "balance_after": derived_running,
-                "transfer_id": ev.get("transfer_id"),
-                "expense_id": ev.get("expense_id"),
-            }
-        )
+        row_data = {
+            "date": ev["date"],
+            "kind": ev["kind"],
+            "description": ev["description"],
+            "signed_amount": ev["signed_amount"],
+            "balance_after": derived_running,
+            "transfer_id": ev.get("transfer_id"),
+            "expense_id": ev.get("expense_id"),
+        }
+        # Add expense_obj if present
+        if "expense_obj" in ev:
+            row_data["expense_obj"] = ev["expense_obj"]
+        derived_rows_chron.append(row_data)
 
     # Calculate total balance (all-time, not just the selected range)
     all_transfer_qs = Transfer.objects.filter(withholding_category=category).select_related("from_account", "to_account")
@@ -3516,6 +4724,14 @@ def withholding_category_detail(request, pk):
     # Calculate total for the selected range
     range_total = sum(ev["signed_amount"] for ev in derived_events)
 
+    # Context data for modals
+    all_categories = Category.objects.all().order_by("name")
+    accounts = BankAccount.objects.all().order_by("name")
+    all_rental_units = RentalUnit.objects.select_related("property").order_by("property__name", "name")
+    cra_categories = CRARentalExpenseCategory.objects.all().order_by("name")
+    withholding_categories = WithholdingCategory.objects.select_related("account").all().order_by("account__name", "name")
+    income_categories = IncomeCategory.objects.all().order_by("name")
+
     context = {
         "category": category,
         "derived_rows": list(reversed(derived_rows_chron)),  # newest first for display
@@ -3523,6 +4739,13 @@ def withholding_category_detail(request, pk):
         "range_total": range_total,  # Total change in selected period
         "range_options": range_options,
         "selected_range": selected_range,
+        # For modals
+        "all_categories": all_categories,
+        "accounts": accounts,
+        "all_rental_units": all_rental_units,
+        "cra_categories": cra_categories,
+        "withholding_categories": withholding_categories,
+        "income_categories": income_categories,
     }
     return render(request, "withholding_category_detail.html", context)
 
@@ -3576,12 +4799,48 @@ def expense_edit(request, expense_id):
             messages.success(request, "Attachment deleted.")
             return redirect("expense_edit", expense_id=expense.id)
 
-        form = ExpenseEditForm(request.POST, instance=expense)
-
         # IMPORTANT: do uploads directly from request.FILES
         files = request.FILES.getlist("files")
         print("FILES KEYS:", list(request.FILES.keys()))
         print("FILES COUNT:", len(files))
+
+        # Check if this is a receipt-only upload (from tax summary modal)
+        # If only expense_id and files are present (no other expense form fields), handle separately
+        is_receipt_only_upload = (
+            request.POST.get("expense_id") and
+            files and
+            not any(field in request.POST for field in ["date", "amount", "vendor_name"])
+        )
+
+        if is_receipt_only_upload:
+            # Handle receipt-only upload without form validation
+            created = 0
+            for f in files:
+                if not f:
+                    continue
+                ExpenseAttachment.objects.create(
+                    expense=expense,
+                    file=f,
+                    original_name=getattr(f, "name", "") or "",
+                )
+                created += 1
+
+            if created:
+                messages.success(request, f"Uploaded {created} receipt(s) successfully.")
+                if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                    # AJAX request from modal
+                    from django.http import JsonResponse
+                    return JsonResponse({"success": True, "message": f"Uploaded {created} receipt(s)"})
+                return redirect("expense_edit", expense_id=expense.id)
+            else:
+                messages.error(request, "No files were uploaded.")
+                if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                    from django.http import JsonResponse
+                    return JsonResponse({"success": False, "error": "No files uploaded"}, status=400)
+                return redirect("expense_edit", expense_id=expense.id)
+
+        # Otherwise, process as normal expense edit with form validation
+        form = ExpenseEditForm(request.POST, instance=expense)
 
         if form.is_valid():
             form.save()
@@ -3673,6 +4932,40 @@ def transfer_edit(request, transfer_id):
     })
 
 
+@require_http_methods(["GET", "POST"])
+def balance_adjustment_edit(request, adjustment_id):
+    adjustment = get_object_or_404(
+        BalanceAdjustment.objects.select_related("bank_account"),
+        pk=adjustment_id
+    )
+
+    if request.method == "POST":
+        # Handle delete action
+        if request.POST.get("action") == "delete":
+            account_id = adjustment.bank_account_id
+            adjustment.delete()
+            messages.success(request, "Balance adjustment deleted successfully.")
+            return redirect('bank_account_detail', account_id=account_id)
+
+        # Handle edit action
+        form = BalanceAdjustmentEditForm(request.POST, instance=adjustment)
+
+        if form.is_valid():
+            form.save()
+            messages.success(request, "Balance adjustment updated successfully.")
+            return redirect('bank_account_detail', account_id=adjustment.bank_account_id)
+
+        # If the form is invalid, show errors
+        messages.error(request, "Please correct the errors below.")
+    else:
+        form = BalanceAdjustmentEditForm(instance=adjustment)
+
+    return render(request, "balance_adjustment_edit.html", {
+        "adjustment": adjustment,
+        "form": form,
+    })
+
+
 @require_http_methods(['GET'])
 def get_transfer_api(request, transfer_id):
     """API endpoint to get transfer data as JSON."""
@@ -3712,26 +5005,34 @@ def get_transfer_api(request, transfer_id):
 
 
 @transaction.atomic
-def handle_transfer_edit(request):
+def handle_transfer_edit(request, is_ajax=False):
     """Handle transfer editing including splits."""
     transfer_id = request.POST.get('transfer_id')
     transfer = get_object_or_404(Transfer, pk=transfer_id)
 
     # Handle delete
     if 'delete_transfer' in request.POST:
+        transfer_id_save = transfer.id
         transfer.delete()  # CASCADE deletes children automatically
+
+        if is_ajax:
+            return JsonResponse({
+                'deleted': True,
+                'transaction_id': transfer_id_save
+            })
+
         return redirect(f"/?month={request.POST.get('month', '')}")
 
     # Handle split mode
     if request.POST.get('split_mode') == '1':
-        return handle_transfer_split(request, transfer)
+        return handle_transfer_split(request, transfer, is_ajax)
 
     # Handle normal update (non-split or split child edit)
-    return handle_transfer_update(request, transfer)
+    return handle_transfer_update(request, transfer, is_ajax)
 
 
 @transaction.atomic
-def handle_transfer_split(request, transfer):
+def handle_transfer_split(request, transfer, is_ajax=False):
     """Create or update splits for a transfer."""
 
     # Collect split data from POST
@@ -3761,7 +5062,10 @@ def handle_transfer_split(request, transfer):
     total = sum(s['amount'] for s in splits)
     tolerance = Decimal('0.005')
     if abs(transfer.amount - total) > tolerance:
-        # Return error - in production, use messages framework
+        if is_ajax:
+            return JsonResponse({
+                'error': 'Split amounts do not match transfer total'
+            }, status=400)
         return redirect(f"/?month={request.POST.get('month', '')}")
 
     # Mark as split parent and delete old splits
@@ -3783,59 +5087,1089 @@ def handle_transfer_split(request, transfer):
             split_order=idx + 1,
         )
 
+    if is_ajax:
+        return JsonResponse({
+            'success': True,
+            'message': 'Transfer split successfully'
+        })
+
     return redirect(f"/?month={request.POST.get('month', '')}")
 
 
-def handle_transfer_update(request, transfer):
+def handle_transfer_update(request, transfer, is_ajax=False):
     """Update a single transfer (non-split or split child)."""
-    # Date
-    transfer.date = datetime.strptime(request.POST["date"], "%Y-%m-%d").date()
+    try:
+        # Date
+        transfer.date = datetime.strptime(request.POST["date"], "%Y-%m-%d").date()
 
-    # Amount
-    amount_str = (request.POST.get("amount") or "").strip()
-    if amount_str:
-        try:
-            transfer.amount = Decimal(amount_str)
-        except (InvalidOperation, ValueError):
+        # Amount
+        amount_str = (request.POST.get("amount") or "").strip()
+        if amount_str:
+            try:
+                transfer.amount = Decimal(amount_str)
+            except (InvalidOperation, ValueError):
+                if is_ajax:
+                    return JsonResponse({
+                        'error': 'Invalid amount format'
+                    }, status=400)
+                pass
+
+        # From / To accounts
+        from_account_id = (request.POST.get("from_account") or "").strip()
+        to_account_id = (request.POST.get("to_account") or "").strip()
+
+        transfer.from_account = (
+            get_object_or_404(BankAccount, pk=from_account_id)
+            if from_account_id else None
+        )
+        transfer.to_account = (
+            get_object_or_404(BankAccount, pk=to_account_id)
+            if to_account_id else None
+        )
+
+        # Withholding bucket
+        bucket_id = (request.POST.get("withholding_category") or "").strip()
+        if bucket_id:
+            transfer.withholding_category = get_object_or_404(
+                WithholdingCategory,
+                pk=bucket_id
+            )
+        else:
+            transfer.withholding_category = None
+
+        # Notes
+        transfer.notes = request.POST.get("notes", "")
+
+        transfer.save()
+
+        # If this is a split child, validate parent still sums correctly
+        if transfer.parent_transfer and not transfer.parent_transfer.validate_split_amounts():
+            # Log warning or notify user
             pass
 
-    # From / To accounts
-    from_account_id = (request.POST.get("from_account") or "").strip()
-    to_account_id = (request.POST.get("to_account") or "").strip()
+        if is_ajax:
+            return JsonResponse({
+                'success': True,
+                'message': 'Transfer updated successfully'
+            })
 
-    transfer.from_account = (
-        get_object_or_404(BankAccount, pk=from_account_id)
-        if from_account_id else None
+        if transfer.date:
+            selected_month_param = f"{transfer.date.year:04d}-{transfer.date.month:02d}"
+        else:
+            selected_month_param = request.POST.get('month', '')
+
+        return redirect(f"/?month={selected_month_param}")
+    except Exception as e:
+        if is_ajax:
+            return JsonResponse({
+                'error': f'Error updating transfer: {str(e)}'
+            }, status=400)
+        raise
+
+
+# ============================================
+# MONTH-END CLOSE WIZARD
+# ============================================
+
+def create_comprehensive_backup(month_str, description="Month-end close"):
+    """
+    Create a comprehensive backup including:
+    1. JSON data export
+    2. SQLite database file
+    3. Media files (receipts/attachments)
+    4. Zip everything together
+
+    Returns: (zip_filename, backup_info_dict)
+    """
+    import os
+    import shutil
+    import zipfile
+    from pathlib import Path
+    from django.core.management import call_command
+    from django.conf import settings
+    from datetime import datetime
+
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    backup_dir = os.path.join(settings.BASE_DIR, 'backups')
+    os.makedirs(backup_dir, exist_ok=True)
+
+    # Temporary directory for backup components
+    temp_backup_dir = os.path.join(backup_dir, f'temp_{timestamp}')
+    os.makedirs(temp_backup_dir, exist_ok=True)
+
+    backup_info = {
+        'timestamp': timestamp,
+        'month': month_str,
+        'description': description,
+        'components': []
+    }
+
+    try:
+        # 1. JSON Data Export
+        print(f"[BACKUP] Step 1/5: Creating JSON data export...")
+        json_filename = f'data_{month_str}_{timestamp}.json'
+        json_path = os.path.join(temp_backup_dir, json_filename)
+
+        with open(json_path, 'w') as f:
+            call_command('dumpdata', 'home', indent=2, stdout=f)
+
+        json_size = os.path.getsize(json_path)
+        print(f"[BACKUP] JSON export complete: {json_size/1024:.1f} KB")
+        backup_info['components'].append({
+            'name': 'JSON Data Export',
+            'filename': json_filename,
+            'size': json_size
+        })
+
+        # 2. SQLite Database File
+        print(f"[BACKUP] Step 2/5: Copying database file...")
+        db_path = os.path.join(settings.BASE_DIR, 'db.sqlite3')
+        if os.path.exists(db_path):
+            db_filename = f'database_{month_str}_{timestamp}.sqlite3'
+            db_backup_path = os.path.join(temp_backup_dir, db_filename)
+            shutil.copy2(db_path, db_backup_path)
+
+            db_size = os.path.getsize(db_backup_path)
+            print(f"[BACKUP] Database copied: {db_size/1024/1024:.1f} MB")
+            backup_info['components'].append({
+                'name': 'SQLite Database',
+                'filename': db_filename,
+                'size': db_size
+            })
+
+        # 3. Media Files (receipts/attachments)
+        print(f"[BACKUP] Step 3/5: Copying media files (receipts)...")
+        media_root = settings.MEDIA_ROOT
+        if os.path.exists(media_root) and os.listdir(media_root):
+            media_backup_dir = os.path.join(temp_backup_dir, 'media')
+            shutil.copytree(media_root, media_backup_dir)
+            print(f"[BACKUP] Media files copied to temp directory")
+
+            # Count media files
+            print(f"[BACKUP] Calculating media file statistics...")
+            media_files = sum(1 for _ in Path(media_backup_dir).rglob('*') if _.is_file())
+            media_size = sum(f.stat().st_size for f in Path(media_backup_dir).rglob('*') if f.is_file())
+            print(f"[BACKUP] Media files: {media_files} files, {media_size/1024/1024:.1f} MB")
+
+            backup_info['components'].append({
+                'name': 'Media Files (Receipts)',
+                'filename': 'media/',
+                'size': media_size,
+                'count': media_files
+            })
+
+        # 4. Create README
+        print(f"[BACKUP] Step 4/5: Creating README file...")
+        readme_path = os.path.join(temp_backup_dir, 'README.txt')
+        with open(readme_path, 'w') as f:
+            f.write(f"FinchFinance Backup - {month_str}\n")
+            f.write(f"Created: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"Description: {description}\n")
+            f.write(f"\n")
+            f.write(f"CONTENTS:\n")
+            f.write(f"-" * 60 + "\n")
+            for comp in backup_info['components']:
+                f.write(f"- {comp['name']}: {comp['filename']}\n")
+                f.write(f"  Size: {comp['size']:,} bytes ({comp['size']/1024/1024:.2f} MB)\n")
+                if 'count' in comp:
+                    f.write(f"  Files: {comp['count']}\n")
+            f.write(f"\n")
+            f.write(f"RESTORE INSTRUCTIONS:\n")
+            f.write(f"-" * 60 + "\n")
+            f.write(f"1. Extract this zip file\n")
+            f.write(f"2. Quick restore (database file):\n")
+            f.write(f"   - Copy {db_filename if 'db_filename' in locals() else 'database_*.sqlite3'} to project root as db.sqlite3\n")
+            f.write(f"   - Copy media/ folder to project root\n")
+            f.write(f"3. OR Data-only restore (JSON):\n")
+            f.write(f"   - python manage.py migrate\n")
+            f.write(f"   - python manage.py loaddata {json_filename}\n")
+            f.write(f"   - Copy media/ folder to project root\n")
+
+        # 5. Create ZIP file
+        print(f"[BACKUP] Step 5/5: Creating ZIP archive...")
+        zip_filename = f'monthend_{month_str}_{timestamp}.zip'
+        zip_path = os.path.join(backup_dir, zip_filename)
+
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            file_count = 0
+            for root, dirs, files in os.walk(temp_backup_dir):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    arcname = os.path.relpath(file_path, temp_backup_dir)
+                    zipf.write(file_path, arcname)
+                    file_count += 1
+                    if file_count % 10 == 0:
+                        print(f"[BACKUP] Compressed {file_count} files...")
+
+        print(f"[BACKUP] ZIP created: {zip_filename}")
+
+        # Clean up temp directory
+        print(f"[BACKUP] Cleaning up temporary files...")
+        shutil.rmtree(temp_backup_dir)
+
+        # Final backup info
+        backup_info['zip_filename'] = zip_filename
+        backup_info['zip_size'] = os.path.getsize(zip_path)
+        backup_info['zip_path'] = zip_path
+
+        print(f"[BACKUP] ✅ Backup complete: {backup_info['zip_size']/1024/1024:.1f} MB")
+        print(f"[BACKUP] Location: {zip_path}")
+
+        return zip_filename, backup_info
+
+    except Exception as e:
+        # Clean up on error
+        if os.path.exists(temp_backup_dir):
+            shutil.rmtree(temp_backup_dir)
+        raise e
+
+
+def month_end_wizard(request):
+    """
+    Multi-step wizard for closing a month:
+    Step 1: Select month
+    Step 2: Review financial summary
+    Step 3: Review account snapshots
+    Step 4: Review/edit net worth
+    Step 5: Confirm and execute
+    """
+    import os
+    import json
+    from django.core.management import call_command
+    from .models import MonthEndClose, AccountSnapshot, NetWorthSnapshot, RentalProperty
+
+    step = request.GET.get('step', '1')
+    month_str = request.GET.get('month', '')
+
+    # Step 1: Select Month
+    if step == '1':
+        # Get months with transactions
+        all_expenses = Expense.objects.all().values_list('date', flat=True)
+        all_income = Income.objects.all().values_list('date', flat=True)
+        all_transfers = Transfer.objects.all().values_list('date', flat=True)
+
+        all_dates = list(all_expenses) + list(all_income) + list(all_transfers)
+
+        months_with_data = {}
+        for d in all_dates:
+            month_key = d.strftime('%Y-%m')
+            month_first = date(d.year, d.month, 1)
+
+            if month_first not in months_with_data:
+                # Check if already closed
+                is_closed = MonthEndClose.objects.filter(month=month_first, is_locked=True).exists()
+                months_with_data[month_first] = {
+                    'key': month_key,
+                    'display': d.strftime('%B %Y'),
+                    'is_closed': is_closed,
+                    'can_close': month_first < date.today() and not is_closed
+                }
+
+        context = {
+            'months': sorted(months_with_data.items(), reverse=True)[:12],  # Last 12 months
+            'step': 1,
+        }
+        return render(request, 'month_end_wizard.html', context)
+
+    # Parse selected month
+    try:
+        year, month = map(int, month_str.split('-'))
+        month_first_day = date(year, month, 1)
+        _, last_day_num = monthrange(year, month)
+        month_last_day = date(year, month, last_day_num)
+        month_display = month_first_day.strftime('%B %Y')
+    except:
+        messages.error(request, 'Invalid month selected')
+        return redirect('month_end_wizard')
+
+    # Check if already closed
+    existing_close = MonthEndClose.objects.filter(month=month_first_day).first()
+    if existing_close and existing_close.is_locked and step != '1':
+        messages.warning(request, f'{month_display} is already closed')
+        return redirect('month_end_wizard')
+
+    # Calculate data for all steps
+    income_entries = Income.objects.filter(date__range=(month_first_day, month_last_day))
+    expense_entries = Expense.objects.filter(date__range=(month_first_day, month_last_day))
+    transfer_entries = Transfer.objects.filter(date__range=(month_first_day, month_last_day))
+
+    # Exclude Business Reimbursement from income totals (similar to excluding Business Expense)
+    total_income = sum(
+        i.amount for i in income_entries
+        if not i.income_category or i.income_category.name != 'Business Reimbursement'
     )
-    transfer.to_account = (
-        get_object_or_404(BankAccount, pk=to_account_id)
-        if to_account_id else None
-    )
+    total_expenses = sum(e.amount for e in expense_entries)
+    total_transfers = sum(t.amount for t in transfer_entries)
+    net_savings = total_income - total_expenses
+    transaction_count = income_entries.count() + expense_entries.count() + transfer_entries.count()
 
-    # Withholding bucket
-    bucket_id = (request.POST.get("withholding_category") or "").strip()
-    if bucket_id:
-        transfer.withholding_category = get_object_or_404(
-            WithholdingCategory,
-            pk=bucket_id
-        )
-    else:
-        transfer.withholding_category = None
+    # Step 2 POST: Save excess and create/update bucket
+    if step == '2' and request.method == 'POST':
+        if request.POST.get('save_excess') == '1':
+            excess_amount = Decimal(request.POST.get('excess_amount', '0'))
+            excess_account_id = request.POST.get('excess_account')
 
-    # Notes
-    transfer.notes = request.POST.get("notes", "")
+            if excess_amount > 0 and excess_account_id:
+                try:
+                    account = BankAccount.objects.get(
+                        id=excess_account_id,
+                        is_withholding_account=True
+                    )
 
-    transfer.save()
+                    # Get or create "Excess/Surplus" bucket
+                    bucket, created = WithholdingCategory.objects.get_or_create(
+                        account=account,
+                        name="Excess/Surplus",
+                        defaults={
+                            'monthly_target': None,
+                            'target_amount': Decimal('0.00'),
+                        }
+                    )
 
-    # If this is a split child, validate parent still sums correctly
-    if transfer.parent_transfer and not transfer.parent_transfer.validate_split_amounts():
-        # Log warning or notify user
-        pass
+                    # Create transfer INTO the excess bucket
+                    Transfer.objects.create(
+                        date=month_last_day,
+                        amount=excess_amount,
+                        description=f"Month-end excess savings for {month_display}",
+                        to_account=account,
+                        withholding_category=bucket,
+                        notes=f"Automatic excess savings from month-end close"
+                    )
 
-    if transfer.date:
-        selected_month_param = f"{transfer.date.year:04d}-{transfer.date.month:02d}"
-    else:
-        selected_month_param = request.POST.get('month', '')
+                    messages.success(
+                        request,
+                        f"Saved ${excess_amount} excess to {bucket.name} bucket in {account.name}"
+                    )
 
-    return redirect(f"/?month={selected_month_param}")
+                except BankAccount.DoesNotExist:
+                    messages.error(request, "Selected withholding account not found.")
+                    return redirect(f"month_end_wizard?step=2&month={month_str}")
+
+            # Continue to Step 3
+            return redirect(f"month_end_wizard?step=3&month={month_str}")
+
+    # Step 2 GET: Review Enhanced Financial Summary
+    if step == '2':
+        # Income breakdown by category (exclude Business Reimbursement)
+        income_breakdown = []
+        business_reimbursement_total = Decimal('0.00')
+
+        for inc_category in IncomeCategory.objects.all():
+            amount = income_entries.filter(income_category=inc_category).aggregate(
+                total=Sum('amount')
+            )['total'] or Decimal('0.00')
+
+            if amount > 0:
+                if inc_category.name == 'Business Reimbursement':
+                    business_reimbursement_total = amount
+                else:
+                    income_breakdown.append({
+                        'name': inc_category.name,
+                        'amount': amount
+                    })
+
+        # Planned expense analysis (categories with monthly_limit > 0, exclude Business Expense)
+        planned_categories = Category.objects.filter(monthly_limit__gt=0).exclude(name='Business Expense')
+        planned_breakdown = []
+        total_planned_budget = Decimal('0.00')
+        total_planned_spent = Decimal('0.00')
+
+        for category in planned_categories:
+            spent = expense_entries.filter(category=category).aggregate(
+                total=Sum('amount')
+            )['total'] or Decimal('0.00')
+
+            budget = category.monthly_limit
+            variance = spent - budget
+
+            planned_breakdown.append({
+                'name': category.name,
+                'budget': budget,
+                'spent': spent,
+                'variance': variance,
+                'status': 'over' if variance > 0 else 'under' if variance < 0 else 'on_target'
+            })
+
+            total_planned_budget += budget
+            total_planned_spent += spent
+
+        planned_variance = total_planned_spent - total_planned_budget
+
+        # Unplanned expense analysis (categories with monthly_limit = 0 or NULL, exclude Business Expense)
+        from django.db.models import Q
+        unplanned_categories = Category.objects.filter(
+            Q(monthly_limit__isnull=True) | Q(monthly_limit=0)
+        ).exclude(name='Business Expense')
+        unplanned_breakdown = []
+        total_unplanned_spent = Decimal('0.00')
+
+        for category in unplanned_categories:
+            spent = expense_entries.filter(category=category).aggregate(
+                total=Sum('amount')
+            )['total'] or Decimal('0.00')
+
+            if spent > 0:  # Only include if there was spending
+                unplanned_breakdown.append({
+                    'name': category.name,
+                    'spent': spent
+                })
+                total_unplanned_spent += spent
+
+        # Business Expense tracking (excluded from net calculations but shown for reference)
+        business_expense_cat = Category.objects.filter(name='Business Expense').first()
+        business_expense_total = Decimal('0.00')
+        if business_expense_cat:
+            business_expense_total = expense_entries.filter(category=business_expense_cat).aggregate(
+                total=Sum('amount')
+            )['total'] or Decimal('0.00')
+
+        # Withholding/Savings analysis (buckets with monthly_target)
+        withholding_buckets = WithholdingCategory.objects.exclude(monthly_target__isnull=True)
+        withholding_breakdown = []
+        total_withholding_target = Decimal('0.00')
+        total_withholding_actual = Decimal('0.00')
+
+        for bucket in withholding_buckets:
+            # Contributions this month (transfers INTO the bucket's account)
+            contributions = transfer_entries.filter(
+                withholding_category=bucket,
+                to_account=bucket.account
+            ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+
+            target = bucket.monthly_target
+            variance = contributions - target
+
+            withholding_breakdown.append({
+                'name': bucket.name,
+                'target': target,
+                'actual': contributions,
+                'variance': variance,
+                'status': 'over' if variance > 0 else 'under' if variance < 0 else 'on_target'
+            })
+
+            total_withholding_target += target
+            total_withholding_actual += contributions
+
+        withholding_variance = total_withholding_actual - total_withholding_target
+
+        # Excess calculation (excludes Business Expense, includes withholding contributions)
+        # Calculate true surplus: Income - (Planned + Unplanned + Withholding)
+        true_surplus = total_income - total_planned_spent - total_unplanned_spent - total_withholding_actual
+
+        # Keep net_savings for overall display (includes Business Expense)
+        net_surplus = total_income - total_expenses
+
+        if true_surplus > 0:
+            # Only calculate excess if we have actual surplus after all allocations
+            planned_under_spend = sum(
+                (item['budget'] - item['spent'])
+                for item in planned_breakdown
+                if item['variance'] < 0
+            )
+            excess_to_save = true_surplus
+            deficit_amount = Decimal('0.00')
+        else:
+            planned_under_spend = Decimal('0.00')
+            excess_to_save = Decimal('0.00')
+            deficit_amount = abs(true_surplus) if true_surplus < 0 else Decimal('0.00')
+
+        # Get withholding accounts for excess bucket selection
+        withholding_accounts = BankAccount.objects.filter(
+            is_withholding_account=True,
+            is_active=True
+        ).order_by('name')
+
+        context = {
+            'step': 2,
+            'month': month_str,
+            'month_display': month_display,
+
+            # Existing totals
+            'total_income': total_income,
+            'total_expenses': total_expenses,
+            'net_savings': net_savings,
+            'total_transfers': total_transfers,
+            'transaction_count': transaction_count,
+            'income_count': income_entries.count(),
+            'expense_count': expense_entries.count(),
+            'transfer_count': transfer_entries.count(),
+
+            # NEW: Income breakdown
+            'income_breakdown': income_breakdown,
+            'business_reimbursement_total': business_reimbursement_total,
+
+            # NEW: Planned expense analysis
+            'planned_breakdown': planned_breakdown,
+            'total_planned_budget': total_planned_budget,
+            'total_planned_spent': total_planned_spent,
+            'planned_variance': planned_variance,
+
+            # NEW: Unplanned expense analysis
+            'unplanned_breakdown': unplanned_breakdown,
+            'total_unplanned_spent': total_unplanned_spent,
+
+            # NEW: Business Expense (excluded from net but shown for reference)
+            'business_expense_total': business_expense_total,
+
+            # NEW: Withholding analysis
+            'withholding_breakdown': withholding_breakdown,
+            'total_withholding_target': total_withholding_target,
+            'total_withholding_actual': total_withholding_actual,
+            'withholding_variance': withholding_variance,
+
+            # NEW: Excess savings
+            'net_surplus': net_surplus,
+            'true_surplus': true_surplus,
+            'has_surplus': true_surplus > 0,
+            'excess_to_save': excess_to_save,
+            'planned_under_spend': planned_under_spend,
+            'deficit_amount': deficit_amount,
+            'withholding_accounts': withholding_accounts,
+        }
+        return render(request, 'month_end_wizard.html', context)
+
+    # Step 3: Review Account Snapshots
+    elif step == '3':
+        # Get previous month's close for comparison
+        prev_close = MonthEndClose.objects.filter(
+            month__lt=month_first_day
+        ).order_by('-month').first()
+
+        regular_accounts = []
+        retirement_accounts = []
+        total_regular_balance = Decimal('0')
+        total_retirement_balance = Decimal('0')
+
+        for account in BankAccount.objects.filter(is_active=True).order_by('institution', 'name'):
+            balance = account.current_balance or Decimal('0')
+
+            # Get previous balance if available
+            prev_balance = Decimal('0')
+            increase = Decimal('0')
+            if prev_close:
+                prev_snapshot = AccountSnapshot.objects.filter(
+                    month_close=prev_close,
+                    bank_account=account
+                ).first()
+                if prev_snapshot:
+                    prev_balance = prev_snapshot.balance
+                    increase = balance - prev_balance
+
+            account_data = {
+                'id': account.id,
+                'name': f'{account.institution} - {account.name}',
+                'balance': balance,
+                'prev_balance': prev_balance,
+                'increase': increase,
+            }
+
+            # Separate retirement accounts
+            if account.account_type == 'RETIREMENT':
+                retirement_accounts.append(account_data)
+                total_retirement_balance += balance
+            else:
+                regular_accounts.append(account_data)
+                total_regular_balance += balance
+
+        # Calculate total retirement increase
+        prev_retirement_total = Decimal('0')
+        if prev_close:
+            for acc in retirement_accounts:
+                prev_retirement_total += acc['prev_balance']
+        retirement_increase = total_retirement_balance - prev_retirement_total
+
+        context = {
+            'step': 3,
+            'month': month_str,
+            'month_display': month_display,
+            'regular_accounts': regular_accounts,
+            'retirement_accounts': retirement_accounts,
+            'total_regular_balance': total_regular_balance,
+            'total_retirement_balance': total_retirement_balance,
+            'retirement_increase': retirement_increase,
+            'prev_close_month': prev_close.month_display if prev_close else None,
+        }
+        return render(request, 'month_end_wizard.html', context)
+
+    # Step 4: Review/Edit Net Worth
+    elif step == '4':
+        # Calculate net worth components
+        # Separate liquid assets from investment assets (TFSA, RETIREMENT)
+        liquid_assets = Decimal('0')
+        investment_assets = Decimal('0')
+
+        for acc in BankAccount.objects.filter(is_active=True):
+            balance = acc.current_balance or Decimal('0')
+            if acc.account_type in ['TFSA', 'RETIREMENT']:
+                investment_assets += balance
+            else:
+                liquid_assets += balance
+
+        # Property equity - check if before or after Foxview purchase
+        property_equity = Decimal('0')
+        property_notes = []
+
+        # Arnprior (always include if exists)
+        arnprior = RentalProperty.objects.filter(name__icontains='Arnprior', is_active=True).first()
+        if arnprior and arnprior.equity:
+            property_equity += arnprior.equity
+            property_notes.append(f'Arnprior: ${arnprior.equity:,.2f}')
+
+        # Foxview (only if Feb 2026 or later)
+        if month_first_day >= date(2026, 2, 1):
+            foxview = RentalProperty.objects.filter(name__icontains='Foxview', is_active=True).first()
+            if foxview and foxview.equity:
+                property_equity += foxview.equity
+                property_notes.append(f'Foxview: ${foxview.equity:,.2f}')
+        else:
+            property_notes.append('Foxview: N/A (purchased Feb 1, 2026)')
+
+        total_net_worth = liquid_assets + investment_assets + property_equity
+
+        context = {
+            'step': 4,
+            'month': month_str,
+            'month_display': month_display,
+            'liquid_assets': liquid_assets,
+            'investment_assets': investment_assets,
+            'property_value': property_equity,
+            'property_notes': property_notes,
+            'liabilities': Decimal('0'),
+            'total_net_worth': total_net_worth,
+        }
+        return render(request, 'month_end_wizard.html', context)
+
+    # Step 5: Confirm and Execute
+    elif step == '5' and request.method == 'POST':
+        print(f"\n{'='*60}")
+        print(f"[MONTH-END] Starting month-end close for {month_str}")
+        print(f"{'='*60}\n")
+        try:
+            # Get all transactions for the month
+            print(f"[MONTH-END] Loading transaction data...")
+            income_entries = Income.objects.filter(date__range=(month_first_day, month_last_day))
+            expense_entries = Expense.objects.filter(date__range=(month_first_day, month_last_day))
+            transfer_entries = Transfer.objects.filter(date__range=(month_first_day, month_last_day))
+
+            # Calculate totals (excluding Business Reimbursement from income)
+            total_income = sum(
+                i.amount for i in income_entries
+                if not i.income_category or i.income_category.name != 'Business Reimbursement'
+            )
+            total_expenses = sum(e.amount for e in expense_entries)
+            net_savings = total_income - total_expenses
+            transaction_count = len(income_entries) + len(expense_entries) + len(transfer_entries)
+            total_transfers = sum(t.amount for t in transfer_entries)
+            print(f"[MONTH-END] Processed {transaction_count} transactions")
+
+            # Recalculate enhanced summary data for storage
+            print(f"[MONTH-END] Calculating enhanced summary data...")
+            # Planned expense totals (monthly_limit > 0, exclude Business Expense)
+            from django.db.models import Q
+            planned_categories = Category.objects.filter(monthly_limit__gt=0).exclude(name='Business Expense')
+            total_planned_budget = Decimal('0.00')
+            total_planned_spent = Decimal('0.00')
+            for category in planned_categories:
+                total_planned_budget += category.monthly_limit
+                spent = expense_entries.filter(category=category).aggregate(
+                    total=Sum('amount')
+                )['total'] or Decimal('0.00')
+                total_planned_spent += spent
+
+            # Unplanned expense totals (monthly_limit = 0 or NULL, exclude Business Expense)
+            unplanned_categories = Category.objects.filter(
+                Q(monthly_limit__isnull=True) | Q(monthly_limit=0)
+            ).exclude(name='Business Expense')
+            total_unplanned_spent = Decimal('0.00')
+            for category in unplanned_categories:
+                spent = expense_entries.filter(category=category).aggregate(
+                    total=Sum('amount')
+                )['total'] or Decimal('0.00')
+                total_unplanned_spent += spent
+
+            # Withholding totals
+            withholding_buckets = WithholdingCategory.objects.exclude(monthly_target__isnull=True)
+            total_withholding_target = Decimal('0.00')
+            total_withholding_actual = Decimal('0.00')
+            for bucket in withholding_buckets:
+                total_withholding_target += bucket.monthly_target
+                contributions = transfer_entries.filter(
+                    withholding_category=bucket,
+                    to_account=bucket.account
+                ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+                total_withholding_actual += contributions
+
+            # Excess saved (check if an excess transfer was created)
+            net_surplus = total_income - total_expenses
+            excess_saved = Decimal('0.00')
+            if net_surplus > 0:
+                # Look for excess transfer created during Step 2
+                excess_bucket = WithholdingCategory.objects.filter(name="Excess/Surplus").first()
+                if excess_bucket:
+                    excess_transfer = transfer_entries.filter(
+                        withholding_category=excess_bucket,
+                        description__icontains="Month-end excess savings"
+                    ).first()
+                    if excess_transfer:
+                        excess_saved = excess_transfer.amount
+
+            # Create comprehensive backup (JSON + DB + Media files, all zipped)
+            print(f"[MONTH-END] Starting comprehensive backup...")
+            backup_filename, backup_info = create_comprehensive_backup(
+                month_str,
+                description=f"Month-end close for {month_display}"
+            )
+
+            # Create month-end close with all snapshots
+            print(f"[MONTH-END] Creating month-end close record and snapshots...")
+            with transaction.atomic():
+                month_close = MonthEndClose.objects.create(
+                    month=month_first_day,
+                    closed_by=request.user.username if request.user.is_authenticated else 'System',
+                    backup_file=backup_filename,
+                    total_income=total_income,
+                    total_expenses=total_expenses,
+                    net_savings=net_savings,
+                    total_transfers=total_transfers,
+                    transaction_count=transaction_count,
+                    is_locked=True,
+
+                    # Enhanced summary fields
+                    planned_budget_total=total_planned_budget,
+                    planned_spent_total=total_planned_spent,
+                    unplanned_spent_total=total_unplanned_spent,
+                    withholding_target_total=total_withholding_target,
+                    withholding_actual_total=total_withholding_actual,
+                    excess_saved=excess_saved,
+                )
+
+                # Account snapshots
+                for account in BankAccount.objects.filter(is_active=True):
+                    balance = account.current_balance or Decimal('0')
+                    if balance != 0:
+                        AccountSnapshot.objects.create(
+                            month_close=month_close,
+                            bank_account=account,
+                            balance=balance,
+                        )
+
+                # Net worth snapshot
+                # Separate liquid assets from investment assets (TFSA, RETIREMENT)
+                liquid_assets = Decimal('0')
+                investment_assets = Decimal('0')
+
+                for acc in BankAccount.objects.filter(is_active=True):
+                    balance = acc.current_balance or Decimal('0')
+                    if acc.account_type in ['TFSA', 'RETIREMENT']:
+                        investment_assets += balance
+                    else:
+                        liquid_assets += balance
+
+                property_equity = Decimal('0')
+                property_notes_list = []
+
+                arnprior = RentalProperty.objects.filter(name__icontains='Arnprior', is_active=True).first()
+                if arnprior and arnprior.equity:
+                    property_equity += arnprior.equity
+                    property_notes_list.append(f'Arnprior: ${arnprior.equity:,.2f}')
+
+                if month_first_day >= date(2026, 2, 1):
+                    foxview = RentalProperty.objects.filter(name__icontains='Foxview', is_active=True).first()
+                    if foxview and foxview.equity:
+                        property_equity += foxview.equity
+                        property_notes_list.append(f'Foxview: ${foxview.equity:,.2f}')
+                else:
+                    property_notes_list.append('Foxview excluded (purchased Feb 1, 2026)')
+
+                NetWorthSnapshot.objects.create(
+                    month_close=month_close,
+                    total_net_worth=liquid_assets + investment_assets + property_equity,
+                    liquid_assets=liquid_assets,
+                    investment_assets=investment_assets,
+                    property_value=property_equity,
+                    liabilities=Decimal('0'),
+                    notes='; '.join(property_notes_list),
+                )
+
+                # Expense category snapshots
+                print(f"[MONTH-END] Creating category snapshots...")
+                for category in planned_categories:
+                    spent = expense_entries.filter(category=category).aggregate(
+                        total=Sum('amount')
+                    )['total'] or Decimal('0')
+                    MonthEndExpenseCategorySnapshot.objects.create(
+                        month_close=month_close,
+                        category=category,
+                        monthly_limit=category.monthly_limit,
+                        actual_spent=spent,
+                    )
+
+                # Withholding bucket snapshots
+                for bucket in withholding_buckets:
+                    contrib = transfer_entries.filter(
+                        withholding_category=bucket,
+                        to_account=bucket.account,
+                    ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+                    MonthEndWithholdingCategorySnapshot.objects.create(
+                        month_close=month_close,
+                        withholding_category=bucket,
+                        monthly_target=bucket.monthly_target or Decimal('0'),
+                        actual_contributed=contrib,
+                    )
+
+                # Income category snapshots
+                for inc_cat in IncomeCategory.objects.filter(monthly_target__gt=0):
+                    received = income_entries.filter(
+                        income_category=inc_cat
+                    ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+                    MonthEndIncomeCategorySnapshot.objects.create(
+                        month_close=month_close,
+                        income_category=inc_cat,
+                        monthly_target=inc_cat.monthly_target,
+                        actual_received=received,
+                    )
+
+            # Success message with backup details
+            print(f"[MONTH-END] Saving account and net worth snapshots...")
+            backup_size_mb = backup_info['zip_size'] / 1024 / 1024
+            component_count = len(backup_info['components'])
+
+            print(f"\n{'='*60}")
+            print(f"[MONTH-END] ✅ Month-end close completed successfully!")
+            print(f"[MONTH-END] Total time: see timestamps above")
+            print(f"{'='*60}\n")
+
+            messages.success(
+                request,
+                f'✅ {month_display} closed successfully! '
+                f'Backup: {backup_filename} ({backup_size_mb:.1f} MB, {component_count} components)'
+            )
+            return redirect('dashboard')
+
+        except Exception as e:
+            messages.error(request, f'Error closing month: {str(e)}')
+            return redirect('month_end_wizard')
+
+    # Step 5 GET: Show confirmation
+    elif step == '5':
+        context = {
+            'step': 5,
+            'month': month_str,
+            'month_display': month_display,
+            'total_income': total_income,
+            'total_expenses': total_expenses,
+            'net_savings': net_savings,
+            'transaction_count': transaction_count,
+        }
+        return render(request, 'month_end_wizard.html', context)
+
+    # Default: redirect to step 1
+    return redirect('month_end_wizard')
+
+
+def net_worth_tracker(request):
+    """
+    Comprehensive Net Worth tracking page showing:
+    - Current assets and liabilities
+    - Historical net worth progression (from month-end closes)
+    - Breakdown by asset type (liquid, investment, property)
+    - Property details with market value and mortgages
+    """
+    from .models import MonthEndClose, NetWorthSnapshot, RentalProperty, AccountSnapshot
+
+    # ============================================
+    # CURRENT NET WORTH (Real-time)
+    # ============================================
+
+    # Assets
+    liquid_assets = Decimal('0')
+    retirement_assets = Decimal('0')
+    liquid_accounts = []
+    retirement_accounts = []
+
+    for account in BankAccount.objects.filter(is_active=True):
+        balance = account.current_balance or Decimal('0')
+        account_data = {
+            'name': account.name,
+            'institution': account.institution,
+            'type': account.get_account_type_display(),
+            'balance': balance
+        }
+
+        if account.account_type == 'RETIREMENT':
+            retirement_assets += balance
+            retirement_accounts.append(account_data)
+        else:
+            # TFSA is liquid (can withdraw anytime), along with chequing, savings
+            liquid_assets += balance
+            liquid_accounts.append(account_data)
+
+    # Property Assets and Liabilities
+    properties = []
+    total_property_value = Decimal('0')
+    total_mortgages = Decimal('0')
+    total_property_equity = Decimal('0')
+
+    for prop in RentalProperty.objects.filter(is_active=True):
+        estimated_value = prop.estimated_value or Decimal('0')
+        mortgage_balance = prop.total_mortgage_balance or Decimal('0')
+        equity = prop.equity or Decimal('0')
+
+        properties.append({
+            'name': prop.name,
+            'market_value': estimated_value,
+            'mortgage_balance': mortgage_balance,
+            'equity': equity,
+            'notes': prop.notes or ''
+        })
+
+        total_property_value += estimated_value
+        total_mortgages += mortgage_balance
+        total_property_equity += equity
+
+    # Credit Card Liabilities
+    credit_card_debt = Decimal('0')
+    credit_cards = []
+
+    for account in BankAccount.objects.filter(is_active=True, account_type='CREDIT_CARD'):
+        balance = account.current_balance or Decimal('0')
+        if balance < 0:  # Credit cards show negative balance as debt
+            debt = abs(balance)
+            credit_card_debt += debt
+            credit_cards.append({
+                'name': account.name,
+                'balance': debt
+            })
+
+    # Total Current Net Worth
+    total_assets = liquid_assets + retirement_assets + total_property_value
+    total_liabilities = total_mortgages + credit_card_debt
+    current_net_worth = total_assets - total_liabilities
+
+    # ============================================
+    # HISTORICAL NET WORTH (From Month-End Closes)
+    # ============================================
+
+    month_closes = MonthEndClose.objects.filter(
+        is_locked=True
+    ).order_by('month')
+
+    historical_data = []
+    prev_net_worth = None
+    for close in month_closes:
+        # Get the associated net worth snapshot
+        snapshot = NetWorthSnapshot.objects.filter(month_close=close).first()
+
+        if snapshot:
+            # Calculate change from previous month
+            change = None
+            if prev_net_worth is not None:
+                change = snapshot.total_net_worth - prev_net_worth
+
+            historical_data.append({
+                'month': close.month,
+                'month_display': close.month.strftime('%b %Y'),
+                'liquid_assets': snapshot.liquid_assets,
+                'investment_assets': snapshot.investment_assets,
+                'property_value': snapshot.property_value,
+                'liabilities': snapshot.liabilities,
+                'total_net_worth': snapshot.total_net_worth,
+                'change': change
+            })
+
+            prev_net_worth = snapshot.total_net_worth
+
+    # Calculate month-over-month changes
+    month_over_month_change = Decimal('0')
+    month_over_month_change_abs = Decimal('0')
+    month_over_month_percent = Decimal('0')
+    latest_month_display = None
+    previous_month_display = None
+    latest_net_worth = None
+    previous_net_worth = None
+    year_over_year_change = Decimal('0')
+    year_over_year_change_abs = Decimal('0')
+    year_over_year_percent = Decimal('0')
+
+    if len(historical_data) >= 2:
+        latest = historical_data[-1]
+        previous = historical_data[-2]
+        month_over_month_change = latest['total_net_worth'] - previous['total_net_worth']
+        month_over_month_change_abs = abs(month_over_month_change)
+        latest_month_display = latest['month_display']
+        previous_month_display = previous['month_display']
+        latest_net_worth = latest['total_net_worth']
+        previous_net_worth = previous['total_net_worth']
+        if previous['total_net_worth'] != 0:
+            month_over_month_percent = (month_over_month_change / previous['total_net_worth']) * 100
+
+    if len(historical_data) >= 13:
+        latest = historical_data[-1]
+        year_ago = historical_data[-13]
+        year_over_year_change = latest['total_net_worth'] - year_ago['total_net_worth']
+        year_over_year_change_abs = abs(year_over_year_change)
+        if year_ago['total_net_worth'] != 0:
+            year_over_year_percent = (year_over_year_change / year_ago['total_net_worth']) * 100
+
+    # Prepare chart data (JSON serializable)
+    chart_labels = [item['month_display'] for item in historical_data]
+    chart_net_worth = [float(item['total_net_worth']) for item in historical_data]
+    chart_liquid = [float(item['liquid_assets']) for item in historical_data]
+    chart_investment = [float(item['investment_assets']) for item in historical_data]
+    chart_property = [float(item['property_value']) for item in historical_data]
+    chart_liabilities = [float(item['liabilities']) for item in historical_data]
+
+    # Asset Allocation (Current)
+    total_assets_float = float(total_assets) if total_assets > 0 else 1
+    liquid_percent = (float(liquid_assets) / total_assets_float) * 100
+    retirement_percent = (float(retirement_assets) / total_assets_float) * 100
+    property_percent = (float(total_property_value) / total_assets_float) * 100
+
+    context = {
+        # Current Net Worth
+        'current_net_worth': current_net_worth,
+        'total_assets': total_assets,
+        'total_liabilities': total_liabilities,
+
+        # Assets Breakdown
+        'liquid_assets': liquid_assets,
+        'retirement_assets': retirement_assets,
+        'total_property_value': total_property_value,
+        'liquid_accounts': liquid_accounts,
+        'retirement_accounts': retirement_accounts,
+
+        # Liabilities Breakdown
+        'total_mortgages': total_mortgages,
+        'credit_card_debt': credit_card_debt,
+        'properties': properties,
+        'credit_cards': credit_cards,
+
+        # Asset Allocation
+        'liquid_percent': liquid_percent,
+        'retirement_percent': retirement_percent,
+        'property_percent': property_percent,
+
+        # Historical Data
+        'historical_data': historical_data,
+        'month_over_month_change': month_over_month_change,
+        'month_over_month_change_abs': month_over_month_change_abs,
+        'month_over_month_percent': month_over_month_percent,
+        'latest_month_display': latest_month_display,
+        'previous_month_display': previous_month_display,
+        'latest_net_worth': latest_net_worth,
+        'previous_net_worth': previous_net_worth,
+        'year_over_year_change': year_over_year_change,
+        'year_over_year_change_abs': year_over_year_change_abs,
+        'year_over_year_percent': year_over_year_percent,
+
+        # Chart Data (for JavaScript)
+        'chart_labels': chart_labels,
+        'chart_net_worth': chart_net_worth,
+        'chart_liquid': chart_liquid,
+        'chart_investment': chart_investment,
+        'chart_property': chart_property,
+        'chart_liabilities': chart_liabilities,
+    }
+
+    return render(request, 'net_worth_tracker.html', context)
 

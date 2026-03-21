@@ -412,7 +412,95 @@
   .sortable-table th.sortable.sort-desc .sort-arrow::before {
     content: "▼";
   }
+
+  /* Toast Notification Styles */
+  #toast-container {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .toast {
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    padding: 16px 20px;
+    min-width: 300px;
+    max-width: 400px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    animation: slideIn 0.3s ease;
+    border-left: 4px solid #198754;
+  }
+
+  .toast.success { border-left-color: #198754; }
+  .toast.error { border-left-color: #dc3545; }
+  .toast.info { border-left-color: #0dcaf0; }
+
+  .toast-icon {
+    font-size: 1.5rem;
+    flex-shrink: 0;
+  }
+
+  .toast-message {
+    flex: 1;
+    font-size: 0.95rem;
+    color: #212529;
+  }
+
+  .toast-close {
+    background: none;
+    border: none;
+    font-size: 1.2rem;
+    color: #6c757d;
+    cursor: pointer;
+    padding: 0;
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.2s;
+  }
+
+  .toast-close:hover {
+    color: #212529;
+  }
+
+  @keyframes slideIn {
+    from {
+      transform: translateX(400px);
+      opacity: 0;
+    }
+    to {
+      transform: translateX(0);
+      opacity: 1;
+    }
+  }
+
+  @keyframes slideOut {
+    from {
+      transform: translateX(0);
+      opacity: 1;
+    }
+    to {
+      transform: translateX(400px);
+      opacity: 0;
+    }
+  }
+
+  .toast.hiding {
+    animation: slideOut 0.3s ease forwards;
+  }
 </style>
+
+<!-- Toast Notification Container -->
+<div id="toast-container"></div>
 
 <div class="dashboard-container container mt-4">
   <h1 class="mb-4">📊 Dashboard</h1>
@@ -433,6 +521,9 @@
           <a href="?month={{ prev_month }}" class="month-nav-btn">← Previous</a>
           <a href="?month={{ current_month }}" class="month-nav-btn today">Today</a>
           <a href="?month={{ next_month }}" class="month-nav-btn">Next →</a>
+          <a href="{% url 'month_end_wizard' %}" class="month-nav-btn" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none;">
+            🔒 Close Month
+          </a>
         </div>
       </div>
     </div>
@@ -663,7 +754,7 @@
           </thead>
           <tbody>
             {% for income in income_entries|dictsortreversed:"date" %}
-              <tr onclick="openIncomeEditModal(
+              <tr data-transaction-id="{{ income.id }}" data-transaction-type="income" onclick="openIncomeEditModal(
                 '{{ income.id }}',
                 '{{ income.date|date:"Y-m-d" }}',
                 '{% if income.income_category %}{{ income.income_category.id }}{% endif %}',
@@ -768,6 +859,7 @@
           <tbody>
             {% for t in transfer_entries|dictsortreversed:"date" %}
               <tr class="transfer-row {% if t.is_split_parent %}split-parent{% endif %}"
+                  data-transaction-id="{{ t.id }}" data-transaction-type="transfer"
                   onclick="openTransferEditModal('{{ t.id }}')">
                 <td class="col-date">{{ t.date }}</td>
                 <td class="col-account">
@@ -880,7 +972,7 @@
           </thead>
           <tbody>
             {% for expense in expense_entries|dictsortreversed:"date" %}
-              <tr onclick="openEditModal(
+              <tr data-transaction-id="{{ expense.id }}" data-transaction-type="expense" onclick="openEditModal(
                 '{{ expense.id }}',
                 '{{ expense.date|date:"Y-m-d" }}',
                 '{{ expense.vendor_name|escapejs }}',
@@ -2119,6 +2211,330 @@
     account: (row) => getCellText(row, 5),
     rental: (row) => getCellText(row, 6),
     notes: (row) => getCellText(row, 7)
+  });
+
+  // ============================================
+  // TOAST NOTIFICATION SYSTEM
+  // ============================================
+
+  function showToast(message, type = 'success') {
+    const container = document.getElementById('toast-container');
+    if (!container) return;
+
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+
+    const icons = {
+      success: '✓',
+      error: '✗',
+      info: 'ℹ'
+    };
+
+    toast.innerHTML = `
+      <div class="toast-icon">${icons[type] || icons.success}</div>
+      <div class="toast-message">${message}</div>
+      <button class="toast-close" onclick="dismissToast(this)">×</button>
+    `;
+
+    container.appendChild(toast);
+
+    // Auto-dismiss after 3 seconds
+    setTimeout(() => {
+      dismissToast(toast.querySelector('.toast-close'));
+    }, 3000);
+  }
+
+  function dismissToast(button) {
+    const toast = button.closest('.toast');
+    if (!toast) return;
+
+    toast.classList.add('hiding');
+    setTimeout(() => {
+      toast.remove();
+    }, 300);
+  }
+
+  // ============================================
+  // AJAX FORM SUBMISSION HANDLERS
+  // ============================================
+
+  // Get CSRF token from cookie
+  function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+      const cookies = document.cookie.split(';');
+      for (let i = 0; i < cookies.length; i++) {
+        const cookie = cookies[i].trim();
+        if (cookie.substring(0, name.length + 1) === (name + '=')) {
+          cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+          break;
+        }
+      }
+    }
+    return cookieValue;
+  }
+
+  const csrftoken = getCookie('csrftoken');
+
+  // ============================================
+  // EXPENSE AJAX HANDLER
+  // ============================================
+
+  document.addEventListener('DOMContentLoaded', function() {
+    const expenseForm = document.getElementById('edit-expense-form');
+    if (expenseForm) {
+      expenseForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+
+        const formData = new FormData(expenseForm);
+
+        fetch(window.location.href, {
+          method: 'POST',
+          headers: {
+            'X-Requested-With': 'XMLHttpRequest',
+            'X-CSRFToken': csrftoken
+          },
+          body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+          if (data.deleted) {
+            // Remove the row from the table
+            const row = document.querySelector(`tr[data-transaction-id="${data.transaction_id}"][data-transaction-type="expense"]`);
+            if (row) {
+              row.remove();
+            }
+            closeEditModal();
+            showToast('Expense deleted successfully', 'success');
+          } else if (data.success) {
+            // Update the table row with new data
+            updateExpenseRow(data.transaction);
+            closeEditModal();
+            showToast('Expense updated successfully', 'success');
+          } else if (data.error) {
+            showToast(data.error, 'error');
+          }
+        })
+        .catch(error => {
+          console.error('Error:', error);
+          showToast('An error occurred while saving', 'error');
+        });
+      });
+    }
+  });
+
+  function updateExpenseRow(expense) {
+    const row = document.querySelector(`tr[data-transaction-id="${expense.id}"][data-transaction-type="expense"]`);
+    if (!row) return;
+
+    // Update cell values (0=date, 1=vendor, 2=category, 3=location, 4=amount, 5=account, 6=rental, 7=notes)
+    const cells = row.querySelectorAll('td');
+
+    // Date
+    cells[0].textContent = expense.date_display;
+
+    // Vendor
+    cells[1].textContent = expense.vendor_name;
+
+    // Category
+    cells[2].textContent = expense.category_name;
+
+    // Location
+    cells[3].textContent = expense.location;
+
+    // Amount
+    cells[4].innerHTML = `$${expense.amount_display}`;
+    cells[4].className = 'col-amount amount-expense';
+
+    // Account
+    if (expense.bank_account_name) {
+      cells[5].textContent = expense.bank_account_name;
+    } else {
+      cells[5].innerHTML = '<span class="text-muted">—</span>';
+    }
+
+    // Rental Unit
+    if (expense.rental_unit_display) {
+      cells[6].textContent = expense.rental_unit_display;
+    } else {
+      cells[6].innerHTML = '<span class="text-muted">—</span>';
+    }
+
+    // Notes
+    if (expense.notes) {
+      cells[7].textContent = expense.notes;
+    } else {
+      cells[7].innerHTML = '<span class="text-muted">—</span>';
+    }
+
+    // Update the onclick handler with new data
+    row.setAttribute('onclick', `openEditModal(
+      '${expense.id}',
+      '${expense.date}',
+      '${expense.vendor_name.replace(/'/g, "\\'")}',
+      '${expense.category_name.replace(/'/g, "\\'")}',
+      '${expense.location.replace(/'/g, "\\'")}',
+      '${expense.amount}',
+      '${(expense.notes || '').replace(/'/g, "\\'")}',
+      '${expense.rental_unit_id || ''}',
+      '${expense.cra_category_id || ''}',
+      '${expense.rental_business_use_pct || ''}',
+      '${expense.bank_account_id || ''}'
+    )`);
+  }
+
+  // ============================================
+  // INCOME AJAX HANDLER
+  // ============================================
+
+  document.addEventListener('DOMContentLoaded', function() {
+    const incomeForm = document.getElementById('edit-income-form');
+    if (incomeForm) {
+      incomeForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+
+        const formData = new FormData(incomeForm);
+
+        fetch(window.location.href, {
+          method: 'POST',
+          headers: {
+            'X-Requested-With': 'XMLHttpRequest',
+            'X-CSRFToken': csrftoken
+          },
+          body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+          if (data.deleted) {
+            // Remove the row from the table
+            const row = document.querySelector(`tr[data-transaction-id="${data.transaction_id}"][data-transaction-type="income"]`);
+            if (row) {
+              row.remove();
+            }
+            closeIncomeModal();
+            showToast('Income deleted successfully', 'success');
+          } else if (data.success) {
+            // Update the table row with new data
+            updateIncomeRow(data.transaction);
+            closeIncomeModal();
+            showToast('Income updated successfully', 'success');
+          } else if (data.error) {
+            showToast(data.error, 'error');
+          }
+        })
+        .catch(error => {
+          console.error('Error:', error);
+          showToast('An error occurred while saving', 'error');
+        });
+      });
+    }
+  });
+
+  function updateIncomeRow(income) {
+    const row = document.querySelector(`tr[data-transaction-id="${income.id}"][data-transaction-type="income"]`);
+    if (!row) return;
+
+    // Update cell values (0=date, 1=source, 2=amount, 3=taxable, 4=account, 5=rental, 6=notes)
+    const cells = row.querySelectorAll('td');
+
+    // Date
+    cells[0].textContent = income.date_display;
+
+    // Source
+    cells[1].textContent = income.source_name;
+
+    // Amount
+    cells[2].innerHTML = `$${income.amount_display}`;
+    cells[2].className = 'col-amount amount-income';
+
+    // Taxable
+    if (income.taxable) {
+      cells[3].innerHTML = '<span class="badge bg-warning text-dark">Yes</span>';
+    } else {
+      cells[3].innerHTML = '<span class="badge bg-secondary">No</span>';
+    }
+
+    // Account
+    if (income.bank_account_name) {
+      cells[4].textContent = income.bank_account_name;
+    } else {
+      cells[4].innerHTML = '<span class="text-muted">—</span>';
+    }
+
+    // Rental Unit
+    if (income.rental_unit_display) {
+      cells[5].textContent = income.rental_unit_display;
+    } else {
+      cells[5].innerHTML = '<span class="text-muted">—</span>';
+    }
+
+    // Notes
+    if (income.notes) {
+      cells[6].textContent = income.notes;
+    } else {
+      cells[6].innerHTML = '<span class="text-muted">—</span>';
+    }
+
+    // Update the onclick handler with new data
+    row.setAttribute('onclick', `openIncomeEditModal(
+      '${income.id}',
+      '${income.date}',
+      '${income.income_category_id || ''}',
+      '${income.rental_unit_id || ''}',
+      '${income.amount}',
+      '${income.taxable}',
+      '${(income.notes || '').replace(/'/g, "\\'")}',
+      '${income.bank_account_id || ''}'
+    )`);
+  }
+
+  // ============================================
+  // TRANSFER AJAX HANDLER
+  // ============================================
+
+  document.addEventListener('DOMContentLoaded', function() {
+    const transferForm = document.getElementById('edit-transfer-form');
+    if (transferForm) {
+      transferForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+
+        const formData = new FormData(transferForm);
+
+        fetch(window.location.href, {
+          method: 'POST',
+          headers: {
+            'X-Requested-With': 'XMLHttpRequest',
+            'X-CSRFToken': csrftoken
+          },
+          body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+          if (data.deleted) {
+            // Remove the row from the table
+            const row = document.querySelector(`tr[data-transaction-id="${data.transaction_id}"][data-transaction-type="transfer"]`);
+            if (row) {
+              row.remove();
+            }
+            closeTransferModal();
+            showToast('Transfer deleted successfully', 'success');
+          } else if (data.success) {
+            // For transfers, we need to reload the page because of split complexity
+            // In the future, this could be enhanced to update in place
+            showToast('Transfer updated successfully', 'success');
+            setTimeout(() => {
+              window.location.reload();
+            }, 500);
+          } else if (data.error) {
+            showToast(data.error, 'error');
+          }
+        })
+        .catch(error => {
+          console.error('Error:', error);
+          showToast('An error occurred while saving', 'error');
+        });
+      });
+    }
   });
 </script>
 

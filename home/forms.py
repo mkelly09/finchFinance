@@ -11,6 +11,7 @@ from .models import (
     RentalUnit,
     CRARentalExpenseCategory,
     Transfer,
+    BalanceAdjustment,
 )
 
 
@@ -309,6 +310,26 @@ class TransferEditForm(forms.ModelForm):
             "to_account": forms.Select(attrs={"class": "form-select"}),
             "withholding_category": forms.Select(attrs={"class": "form-select"}),
         }
+
+
+class BalanceAdjustmentEditForm(forms.ModelForm):
+    class Meta:
+        model = BalanceAdjustment
+        fields = [
+            "date",
+            "amount",
+            "reason",
+            "notes",
+            "bank_account",
+        ]
+        widgets = {
+            "date": forms.DateInput(attrs={"type": "date", "class": "form-control"}),
+            "amount": forms.NumberInput(attrs={"class": "form-control", "step": "0.01"}),
+            "reason": forms.TextInput(attrs={"class": "form-control"}),
+            "notes": forms.Textarea(attrs={"class": "form-control", "rows": 3}),
+            "bank_account": forms.Select(attrs={"class": "form-select"}),
+        }
+
 
 class ExpenseAttachmentUploadForm(forms.Form):
     files = forms.FileField(

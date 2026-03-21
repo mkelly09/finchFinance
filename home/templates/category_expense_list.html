@@ -1,7 +1,62 @@
 {% extends "base.html" %}
 {% load humanize %}
+{% load form_filters %}
 
 {% block content %}
+
+<style>
+  /* Hover effects for table rows */
+  .finch-table tbody tr {
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+  }
+
+  .finch-table tbody tr:hover {
+    background-color: #f8f9fa;
+  }
+
+  /* Table Sorting Styles */
+  .sortable-table th.sortable {
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+    padding-right: 24px;
+    transition: background-color 0.2s ease;
+  }
+
+  .sortable-table th.sortable:hover {
+    background-color: #e9ecef;
+  }
+
+  .sortable-table th.sortable .sort-arrow {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    opacity: 0.3;
+    font-size: 0.7rem;
+  }
+
+  .sortable-table th.sortable .sort-arrow::before {
+    content: "▼";
+  }
+
+  .sortable-table th.sortable.sort-asc .sort-arrow {
+    opacity: 1;
+  }
+
+  .sortable-table th.sortable.sort-asc .sort-arrow::before {
+    content: "▲";
+  }
+
+  .sortable-table th.sortable.sort-desc .sort-arrow {
+    opacity: 1;
+  }
+
+  .sortable-table th.sortable.sort-desc .sort-arrow::before {
+    content: "▼";
+  }
+</style>
 <div class="container mt-4">
   <!-- Breadcrumb -->
   <nav aria-label="breadcrumb" class="mb-3">
@@ -142,20 +197,32 @@
 
         {% if row.expenses %}
           <div class="table-responsive mt-3">
-            <table class="table finch-table table-sm align-middle mb-0">
+            <table class="table finch-table sortable-table table-sm align-middle mb-0" id="expense-table-{{ forloop.counter }}">
               <thead>
                 <tr>
-                  <th style="width: 120px;">Date</th>
-                  <th style="width: 220px;">Vendor</th>
-                  <th style="width: 140px;">Amount</th>
-                  <th style="width: 160px;">Account</th>
-                  <th style="width: 140px;">Location</th>
-                  <th>Notes</th>
+                  <th class="sortable" data-sort="date" style="width: 120px;">Date <span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort="vendor" style="width: 220px;">Vendor <span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort="amount" style="width: 140px;">Amount <span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort="account" style="width: 160px;">Account <span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort="location" style="width: 140px;">Location <span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort="notes">Notes <span class="sort-arrow"></span></th>
                 </tr>
               </thead>
               <tbody>
                 {% for exp in row.expenses %}
-                  <tr>
+                  <tr onclick="openEditModal(
+                    '{{ exp.id }}',
+                    '{{ exp.date|date:"Y-m-d" }}',
+                    '{{ exp.vendor_name|escapejs }}',
+                    '{{ exp.category.name|escapejs }}',
+                    '{{ exp.location|escapejs }}',
+                    '{{ exp.amount }}',
+                    '{{ exp.notes|default_if_none:""|escapejs }}',
+                    '{% if exp.rental_unit %}{{ exp.rental_unit.id }}{% endif %}',
+                    '{% if exp.cra_category %}{{ exp.cra_category.id }}{% endif %}',
+                    '{% if exp.rental_business_use_pct %}{{ exp.rental_business_use_pct }}{% endif %}',
+                    '{% if exp.bank_account %}{{ exp.bank_account.id }}{% endif %}'
+                  )">
                     <td>{{ exp.date|date:"Y-m-d" }}</td>
                     <td>{{ exp.vendor_name }}</td>
                     <td><span class="amount-expense">${{ exp.amount|floatformat:2|intcomma }}</span></td>
@@ -182,4 +249,293 @@
     </div>
   {% endfor %}
 </div>
+
+<!-- Backdrop -->
+<div id="modalBackdrop" style="
+  display:none; position:fixed; top:0; left:0; width:100%; height:100%;
+  background-color:rgba(0,0,0,0.5); z-index:999;">
+</div>
+
+<!-- Expense Edit Modal -->
+<div id="editExpenseModal" style="
+  display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%);
+  background:white; padding:20px; border-radius:8px; box-shadow:0 4px 10px rgba(0,0,0,0.3);
+  z-index:1000; width:600px; max-width:90%;">
+  <h3 class="mb-3">Edit Expense</h3>
+  <form method="post" id="edit-expense-form">
+    {% csrf_token %}
+    <input type="hidden" name="expense_id" id="edit-expense-id" />
+
+    <div class="container-fluid">
+      <div class="row mb-2">
+        <div class="col-4">
+          <label for="edit-date" class="form-label">Date:</label>
+          <input type="date" class="form-control" name="date" id="edit-date" required />
+        </div>
+        <div class="col-8">
+          <label for="edit-vendor" class="form-label">Vendor:</label>
+          <input type="text" class="form-control" name="vendor_name" id="edit-vendor" />
+        </div>
+      </div>
+
+      <div class="row mb-2">
+        <div class="col-4">
+          <label for="edit-category" class="form-label">Category:</label>
+          <select class="form-select" name="category" id="edit-category">
+            {% for cat in all_categories %}
+              <option value="{{ cat.name }}">{{ cat.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-4">
+          <label for="edit-location" class="form-label">Location:</label>
+          <input type="text" class="form-control" name="location" id="edit-location" />
+        </div>
+        <div class="col-4">
+          <label for="edit-amount" class="form-label">Amount:</label>
+          <input type="number" step="0.01" class="form-control" name="amount" id="edit-amount" required />
+        </div>
+      </div>
+
+      <div class="row mb-2">
+        <div class="col-6">
+          <label for="edit-bank-account" class="form-label">Bank Account:</label>
+          <select class="form-select" name="bank_account" id="edit-bank-account">
+            <option value="">—</option>
+            {% for account in accounts %}
+              <option value="{{ account.id }}">{{ account.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-6">
+          <label for="edit-rental-unit" class="form-label">Rental Unit (optional):</label>
+          <select class="form-select" name="rental_unit" id="edit-rental-unit">
+            <option value="">—</option>
+            {% for u in all_rental_units %}
+              <option value="{{ u.id }}">
+                {{ u.property.name }} — {{ u.name }}
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+
+      <div class="row mb-2">
+        <div class="col-12">
+          <label for="edit-cra-category" class="form-label">CRA Rental Category (optional):</label>
+          <select class="form-select" name="cra_category" id="edit-cra-category">
+            <option value="">—</option>
+            {% for c in cra_categories %}
+              <option value="{{ c.id }}">{{ c.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+
+      <div class="row mb-2">
+        <div class="col-12">
+          <label for="edit-notes" class="form-label">Notes:</label>
+          <input type="text" class="form-control" name="notes" id="edit-notes" />
+        </div>
+      </div>
+
+      <div class="d-flex justify-content-between align-items-center mt-3">
+        <a
+          id="expense-advanced-link"
+          class="btn btn-outline-secondary"
+          href="#"
+          target="_blank"
+          rel="noopener"
+          onclick="event.stopPropagation();"
+        >
+          Receipts / Advanced…
+        </a>
+
+        <div>
+          <button type="submit" class="btn btn-primary me-2">Save Changes</button>
+          <button type="submit" name="delete_expense" value="1"
+                  class="btn btn-danger me-2"
+                  onclick="return confirm('Are you sure?');">Delete</button>
+          <button type="button" class="btn btn-secondary" onclick="closeEditModal()">Cancel</button>
+        </div>
+      </div>
+
+    </div>
+  </form>
+</div>
+
+<script>
+  const EXPENSE_EDIT_URL_TEMPLATE = "{% url 'expense_edit' 999999 %}";
+
+  // Expense modal open/close
+  function openEditModal(
+    id,
+    date,
+    vendor,
+    category,
+    location,
+    amount,
+    notes,
+    rentalUnitId,
+    craCategoryId,
+    rentalPct,
+    bankAccountId
+  ) {
+    document.getElementById("edit-expense-id").value = id;
+    document.getElementById("edit-date").value = date;
+    document.getElementById("edit-vendor").value = vendor;
+    document.getElementById("edit-category").value = category;
+    document.getElementById("edit-location").value = location;
+    document.getElementById("edit-amount").value = amount;
+    document.getElementById("edit-notes").value = notes;
+
+    document.getElementById("edit-rental-unit").value = rentalUnitId || "";
+    document.getElementById("edit-cra-category").value = craCategoryId || "";
+
+    const bankSelect = document.getElementById("edit-bank-account");
+    if (bankSelect) {
+      bankSelect.value = bankAccountId || "";
+    }
+
+    const advLink = document.getElementById("expense-advanced-link");
+    if (advLink) {
+      advLink.href = EXPENSE_EDIT_URL_TEMPLATE.replace("999999", String(id));
+    }
+
+    document.getElementById("modalBackdrop").style.display = "block";
+    document.getElementById("editExpenseModal").style.display = "block";
+  }
+
+  function closeEditModal() {
+    const modal = document.getElementById("editExpenseModal");
+    const backdrop = document.getElementById("modalBackdrop");
+    if (modal) modal.style.display = "none";
+    if (backdrop) backdrop.style.display = "none";
+  }
+
+  // Global ESC closes modal
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "Escape") {
+      closeEditModal();
+    }
+  });
+
+  // Clicking backdrop also closes
+  const backdropEl = document.getElementById("modalBackdrop");
+  if (backdropEl) {
+    backdropEl.addEventListener("click", function () {
+      closeEditModal();
+    });
+  }
+
+  // ============================================
+  // TABLE SORTING FUNCTIONALITY
+  // ============================================
+
+  /**
+   * Initialize sorting for a table
+   */
+  function initTableSorting(tableId, columnConfig) {
+    const table = document.getElementById(tableId);
+    if (!table) return;
+
+    const tbody = table.querySelector('tbody');
+    const headers = table.querySelectorAll('th.sortable');
+
+    headers.forEach(header => {
+      header.addEventListener('click', () => {
+        const sortKey = header.getAttribute('data-sort');
+        const currentSort = header.classList.contains('sort-asc') ? 'asc' :
+                           header.classList.contains('sort-desc') ? 'desc' : 'none';
+
+        // Determine new sort direction
+        let newSort;
+        if (currentSort === 'none' || currentSort === 'desc') {
+          newSort = 'asc';
+        } else {
+          newSort = 'desc';
+        }
+
+        // Remove sort classes from all headers
+        headers.forEach(h => h.classList.remove('sort-asc', 'sort-desc'));
+
+        // Add sort class to clicked header
+        header.classList.add(`sort-${newSort}`);
+
+        // Sort the rows
+        sortTable(tbody, sortKey, newSort, columnConfig[sortKey]);
+      });
+    });
+  }
+
+  /**
+   * Sort table rows
+   */
+  function sortTable(tbody, sortKey, direction, extractor) {
+    const rows = Array.from(tbody.querySelectorAll('tr'));
+
+    rows.sort((a, b) => {
+      const aVal = extractor(a);
+      const bVal = extractor(b);
+
+      // Handle null/undefined values
+      if (aVal === null || aVal === undefined) return 1;
+      if (bVal === null || bVal === undefined) return -1;
+
+      // Compare values
+      let comparison = 0;
+      if (typeof aVal === 'number' && typeof bVal === 'number') {
+        comparison = aVal - bVal;
+      } else {
+        comparison = String(aVal).localeCompare(String(bVal), undefined, { numeric: true, sensitivity: 'base' });
+      }
+
+      return direction === 'asc' ? comparison : -comparison;
+    });
+
+    // Re-append rows in sorted order
+    rows.forEach(row => tbody.appendChild(row));
+  }
+
+  /**
+   * Extract text content from a cell, handling nested elements
+   */
+  function getCellText(row, cellIndex) {
+    const cell = row.cells[cellIndex];
+    if (!cell) return '';
+    return cell.textContent.trim();
+  }
+
+  /**
+   * Parse currency string to number
+   */
+  function parseCurrency(text) {
+    const cleaned = text.replace(/[$,]/g, '');
+    return parseFloat(cleaned) || 0;
+  }
+
+  /**
+   * Parse date string to comparable value
+   */
+  function parseDate(dateStr) {
+    const date = new Date(dateStr);
+    return date.getTime();
+  }
+
+  // Initialize sorting for all expense tables on the page
+  document.addEventListener('DOMContentLoaded', function() {
+    const expenseTables = document.querySelectorAll('table[id^="expense-table-"]');
+    expenseTables.forEach(table => {
+      initTableSorting(table.id, {
+        date: (row) => parseDate(getCellText(row, 0)),
+        vendor: (row) => getCellText(row, 1),
+        amount: (row) => parseCurrency(getCellText(row, 2)),
+        account: (row) => getCellText(row, 3),
+        location: (row) => getCellText(row, 4),
+        notes: (row) => getCellText(row, 5)
+      });
+    });
+  });
+</script>
+
 {% endblock %}

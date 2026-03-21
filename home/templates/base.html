@@ -5,6 +5,11 @@
   <meta charset="UTF-8">
   <title>Finch Finance</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#212529">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Finch Finance">
+  <link rel="manifest" href="{% static 'manifest.json' %}">
 
   <!-- Bootstrap CSS -->
   <link
@@ -69,6 +74,13 @@
           <a class="nav-link {% if 'withholding' in request.path %}active{% endif %}"
              href="{% url 'withholding_overview' %}">
             🪣 Withholdings
+          </a>
+        </li>
+
+        <li class="nav-item">
+          <a class="nav-link {% if request.resolver_match.url_name == 'net_worth_tracker' %}active{% endif %}"
+             href="{% url 'net_worth_tracker' %}">
+            💰 Net Worth
           </a>
         </li>
 

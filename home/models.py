@@ -89,6 +89,17 @@ class BankAccount(models.Model):
     )
     last_updated = models.DateField(null=True, blank=True)
 
+    # Automatic balance tracking
+    balance_tracking_enabled = models.BooleanField(
+        default=False,
+        help_text="Enable automatic balance updates from transactions.",
+    )
+    balance_tracking_start_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Only transactions on/after this date will affect the balance.",
+    )
+
     is_active = models.BooleanField(default=True)
 
     def __str__(self):
@@ -317,13 +328,51 @@ class Expense(models.Model):
         return f"{self.date} | {self.vendor_name} | {self.amount}"
 
 
+def expense_attachment_upload_to(instance, filename):
+    """
+    Generate descriptive filename for expense attachments.
+    Format: YYYY-MM-DD_CategoryName_VendorName_$Amount.ext
+    Example: 2026-02-15_Home-Repairs_Home-Depot_$125.50.pdf
+    """
+    import os
+    import re
+    from datetime import datetime
+
+    expense = instance.expense
+
+    # Date in YYYY-MM-DD format
+    date_str = expense.date.strftime("%Y-%m-%d")
+
+    # Category name - sanitize for filesystem (remove special chars, replace spaces with dashes)
+    category_name = expense.category.name if expense.category else "Uncategorized"
+    category_clean = re.sub(r'[^\w\s-]', '', category_name)
+    category_clean = re.sub(r'[-\s]+', '-', category_clean).strip('-')
+
+    # Vendor name - sanitize for filesystem
+    vendor_name = expense.vendor_name or "Unknown-Vendor"
+    vendor_clean = re.sub(r'[^\w\s-]', '', vendor_name)
+    vendor_clean = re.sub(r'[-\s]+', '-', vendor_clean).strip('-')
+
+    # Amount formatted as dollar amount
+    amount_str = f"${expense.amount:.2f}"
+
+    # Get file extension from original filename
+    _, ext = os.path.splitext(filename)
+
+    # Build the final filename (no original filename, just expense data)
+    new_filename = f"{date_str}_{category_clean}_{vendor_clean}_{amount_str}{ext}"
+
+    # Upload to year/month directory based on expense date (for better organization)
+    return f"expense_attachments/{expense.date.year}/{expense.date.month:02d}/{new_filename}"
+
+
 class ExpenseAttachment(models.Model):
     expense = models.ForeignKey(
         "Expense",
         on_delete=models.CASCADE,
         related_name="attachments",
     )
-    file = models.FileField(upload_to="expense_attachments/%Y/%m/")
+    file = models.FileField(upload_to=expense_attachment_upload_to)
     original_name = models.CharField(max_length=255, blank=True, default="")
     uploaded_at = models.DateTimeField(auto_now_add=True)
 
@@ -475,6 +524,55 @@ class Transfer(models.Model):
     def can_be_split(self) -> bool:
         """Returns True if transfer can be split."""
         return self.parent_transfer is None and not self.is_split_parent
+
+
+class BalanceAdjustment(models.Model):
+    """
+    Manual balance reconciliation adjustment for a bank account.
+
+    Used to reconcile differences between tracked balance and actual bank statement,
+    such as bank fees, interest earned, or other items not yet recorded as transactions.
+
+    Provides a full audit trail for all balance changes.
+    """
+    bank_account = models.ForeignKey(
+        BankAccount,
+        on_delete=models.CASCADE,
+        related_name='balance_adjustments',
+        help_text='Account being adjusted',
+    )
+    date = models.DateField(
+        help_text='Date of the adjustment',
+    )
+    amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        help_text='Adjustment amount (positive = increase balance, negative = decrease balance)',
+    )
+    reason = models.CharField(
+        max_length=255,
+        help_text='Brief reason for adjustment (e.g., "Bank reconciliation")',
+    )
+    notes = models.TextField(
+        blank=True,
+        default='',
+        help_text='Optional detailed notes about this adjustment',
+    )
+    created_by = models.CharField(
+        max_length=100,
+        default='System',
+        help_text='User who created this adjustment',
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+    )
+
+    class Meta:
+        ordering = ['date', 'id']
+
+    def __str__(self):
+        sign = '+' if self.amount >= 0 else ''
+        return f"{self.date} - {self.bank_account.name}: {sign}${self.amount} ({self.reason})"
 
 
 class Income(models.Model):
@@ -1087,3 +1185,241 @@ class CRARentalExpenseCategory(models.Model):
     def __str__(self):
         return self.name
 
+
+class MonthEndClose(models.Model):
+    """
+    Represents a closed month with locked transactions and financial snapshots.
+    Used for month-end closing process to maintain data integrity and track historical balances.
+    """
+    month = models.DateField(
+        unique=True,
+        help_text="First day of the closed month (e.g., 2024-01-01 for January 2024)"
+    )
+    closed_at = models.DateTimeField(auto_now_add=True)
+    closed_by = models.CharField(max_length=100, default="System")
+    backup_file = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="Path to backup file created during close"
+    )
+    notes = models.TextField(blank=True)
+
+    # Financial summary at time of close
+    total_income = models.DecimalField(max_digits=12, decimal_places=2)
+    total_expenses = models.DecimalField(max_digits=12, decimal_places=2)
+    net_savings = models.DecimalField(max_digits=12, decimal_places=2)
+    total_transfers = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    transaction_count = models.IntegerField(default=0)
+
+    # Enhanced financial breakdown (added for detailed month-end analysis)
+    planned_budget_total = models.DecimalField(
+        max_digits=12, decimal_places=2,
+        default=0,
+        help_text="Total budget for planned expense categories (with monthly_limit)"
+    )
+    planned_spent_total = models.DecimalField(
+        max_digits=12, decimal_places=2,
+        default=0,
+        help_text="Total spent in planned expense categories"
+    )
+    unplanned_spent_total = models.DecimalField(
+        max_digits=12, decimal_places=2,
+        default=0,
+        help_text="Total spent in unplanned expense categories (without monthly_limit)"
+    )
+    withholding_target_total = models.DecimalField(
+        max_digits=12, decimal_places=2,
+        default=0,
+        help_text="Total monthly targets for withholding buckets"
+    )
+    withholding_actual_total = models.DecimalField(
+        max_digits=12, decimal_places=2,
+        default=0,
+        help_text="Total contributions to withholding buckets"
+    )
+    excess_saved = models.DecimalField(
+        max_digits=12, decimal_places=2,
+        default=0,
+        help_text="Amount saved to Excess/Surplus bucket"
+    )
+
+    # Lock control
+    is_locked = models.BooleanField(
+        default=True,
+        help_text="When locked, transactions in this month cannot be edited or deleted"
+    )
+
+    # Reopening audit trail
+    reopened_at = models.DateTimeField(null=True, blank=True)
+    reopened_by = models.CharField(max_length=100, blank=True)
+    reopen_reason = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ['-month']
+        verbose_name = "Month-End Close"
+        verbose_name_plural = "Month-End Closes"
+
+    def __str__(self):
+        return f"{self.month.strftime('%B %Y')} - {'Locked' if self.is_locked else 'Reopened'}"
+
+    @property
+    def month_display(self):
+        return self.month.strftime('%B %Y')
+
+
+class AccountSnapshot(models.Model):
+    """
+    Snapshot of a bank account balance at month-end.
+    Tracks account balances over time for historical reporting.
+    """
+    month_close = models.ForeignKey(
+        MonthEndClose,
+        on_delete=models.CASCADE,
+        related_name='account_snapshots'
+    )
+    bank_account = models.ForeignKey(
+        'BankAccount',
+        on_delete=models.CASCADE,
+        related_name='historical_snapshots'
+    )
+    balance = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        help_text="Account balance at month-end"
+    )
+    snapshot_date = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-snapshot_date']
+        unique_together = ['month_close', 'bank_account']
+
+    def __str__(self):
+        return f"{self.bank_account.name} - {self.month_close.month_display}: ${self.balance}"
+
+
+class NetWorthSnapshot(models.Model):
+    """
+    Snapshot of total net worth at month-end.
+    Tracks overall financial health over time.
+    """
+    month_close = models.ForeignKey(
+        MonthEndClose,
+        on_delete=models.CASCADE,
+        related_name='net_worth_snapshot'
+    )
+
+    # Total net worth calculation
+    total_net_worth = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        help_text="Total assets minus liabilities"
+    )
+
+    # Asset breakdown
+    liquid_assets = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        help_text="Cash and easily convertible assets (bank accounts)"
+    )
+    investment_assets = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        help_text="Stocks, bonds, retirement accounts"
+    )
+    property_value = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        help_text="Real estate and property values"
+    )
+
+    # Liabilities
+    liabilities = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        help_text="Loans, credit cards, mortgages"
+    )
+
+    snapshot_date = models.DateTimeField(auto_now_add=True)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ['-snapshot_date']
+
+    def __str__(self):
+        return f"{self.month_close.month_display}: ${self.total_net_worth}"
+
+
+class MonthEndExpenseCategorySnapshot(models.Model):
+    """
+    Snapshot of each expense category's monthly_limit and actual spending at month-end.
+    Preserves historical target values so changing a limit today does not corrupt closed-month views.
+    """
+    month_close = models.ForeignKey(
+        MonthEndClose, on_delete=models.CASCADE,
+        related_name='expense_snapshots'
+    )
+    category = models.ForeignKey(
+        'Category', on_delete=models.PROTECT,
+        related_name='monthly_snapshots'
+    )
+    monthly_limit = models.DecimalField(max_digits=10, decimal_places=2)
+    actual_spent = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+
+    class Meta:
+        unique_together = ['month_close', 'category']
+        ordering = ['category__name']
+
+    def __str__(self):
+        return f"{self.category.name} - {self.month_close.month_display}: limit ${self.monthly_limit}"
+
+
+class MonthEndWithholdingCategorySnapshot(models.Model):
+    """
+    Snapshot of each withholding bucket's monthly_target and actual contributions at month-end.
+    Preserves historical target values so changing a target today does not corrupt closed-month views.
+    """
+    month_close = models.ForeignKey(
+        MonthEndClose, on_delete=models.CASCADE,
+        related_name='withholding_snapshots'
+    )
+    withholding_category = models.ForeignKey(
+        'WithholdingCategory', on_delete=models.PROTECT,
+        related_name='monthly_snapshots'
+    )
+    monthly_target = models.DecimalField(max_digits=12, decimal_places=2)
+    actual_contributed = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+
+    class Meta:
+        unique_together = ['month_close', 'withholding_category']
+        ordering = ['withholding_category__name']
+
+    def __str__(self):
+        return f"{self.withholding_category.name} - {self.month_close.month_display}: target ${self.monthly_target}"
+
+
+class MonthEndIncomeCategorySnapshot(models.Model):
+    """
+    Snapshot of each income category's monthly_target and actual income received at month-end.
+    Preserves historical target values so changing a target today does not corrupt closed-month views.
+    """
+    month_close = models.ForeignKey(
+        MonthEndClose, on_delete=models.CASCADE,
+        related_name='income_snapshots'
+    )
+    income_category = models.ForeignKey(
+        'IncomeCategory', on_delete=models.PROTECT,
+        related_name='monthly_snapshots'
+    )
+    monthly_target = models.DecimalField(max_digits=10, decimal_places=2)
+    actual_received = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+
+    class Meta:
+        unique_together = ['month_close', 'income_category']
+        ordering = ['income_category__name']
+
+    def __str__(self):
+        return f"{self.income_category.name} - {self.month_close.month_display}: target ${self.monthly_target}"

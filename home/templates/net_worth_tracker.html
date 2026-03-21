@@ -1,0 +1,580 @@
+{% extends 'base.html' %}
+{% load humanize %}
+
+{% block content %}
+<style>
+  .net-worth-container {
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+
+  .summary-card {
+    border-radius: 12px;
+    border: none;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    background-color: #fff;
+    margin-bottom: 24px;
+    overflow: hidden;
+  }
+
+  .summary-header {
+    padding: 20px 24px;
+    color: white;
+    font-weight: 600;
+  }
+
+  .gradient-green {
+    background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+  }
+
+  .gradient-blue {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  }
+
+  .gradient-red {
+    background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+  }
+
+  .gradient-purple {
+    background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+  }
+
+  .metric-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 20px;
+    padding: 24px;
+  }
+
+  .metric-item {
+    text-align: center;
+  }
+
+  .metric-label {
+    font-size: 0.85rem;
+    color: #6c757d;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .metric-value {
+    font-size: 1.8rem;
+    font-weight: 700;
+    color: #212529;
+  }
+
+  .metric-value.positive {
+    color: #198754;
+  }
+
+  .metric-value.negative {
+    color: #dc3545;
+  }
+
+  .detail-table {
+    width: 100%;
+    margin: 0;
+  }
+
+  .detail-table th {
+    background-color: #f8f9fa;
+    border-bottom: 2px solid #dee2e6;
+    font-weight: 600;
+    color: #495057;
+    text-transform: uppercase;
+    font-size: 0.8rem;
+    letter-spacing: 0.5px;
+    padding: 12px 16px;
+  }
+
+  .detail-table td {
+    padding: 14px 16px;
+    vertical-align: middle;
+    border-bottom: 1px solid #dee2e6;
+  }
+
+  .detail-table tbody tr:hover {
+    background-color: #f8f9fa;
+  }
+
+  .total-row {
+    border-top: 3px solid #000;
+    font-weight: 700;
+    background-color: #f8f9fa;
+  }
+
+  .change-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 12px;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    font-weight: 600;
+  }
+
+  .change-indicator.positive {
+    background-color: #d1f4e0;
+    color: #198754;
+  }
+
+  .change-indicator.negative {
+    background-color: #f8d7da;
+    color: #dc3545;
+  }
+
+  .chart-container {
+    position: relative;
+    height: 400px;
+    padding: 24px;
+  }
+
+  .allocation-pie {
+    max-width: 400px;
+    margin: 0 auto;
+  }
+</style>
+
+<div class="net-worth-container mt-4">
+  <div class="row align-items-end mb-4">
+    <div class="col-lg-8">
+      <h1 class="mb-2">💰 Net Worth Tracker</h1>
+      <p class="text-muted mb-0">
+        Comprehensive view of your assets, liabilities, and net worth progression over time.
+      </p>
+    </div>
+  </div>
+
+  <!-- Current Net Worth Summary -->
+  <div class="summary-card">
+    <div class="summary-header gradient-green">
+      <h5 class="mb-0">📊 Current Net Worth</h5>
+    </div>
+    <div class="metric-grid">
+      <div class="metric-item">
+        <div class="metric-label">Total Assets</div>
+        <div class="metric-value positive">${{ total_assets|floatformat:2|intcomma }}</div>
+      </div>
+      <div class="metric-item">
+        <div class="metric-label">Total Liabilities</div>
+        <div class="metric-value negative">${{ total_liabilities|floatformat:2|intcomma }}</div>
+      </div>
+      <div class="metric-item">
+        <div class="metric-label">Net Worth</div>
+        <div class="metric-value {% if current_net_worth >= 0 %}positive{% else %}negative{% endif %}">
+          ${{ current_net_worth|floatformat:2|intcomma }}
+        </div>
+      </div>
+      {% if month_over_month_change != 0 %}
+      <div class="metric-item">
+        <div class="metric-label">Month-over-Month</div>
+        <div class="metric-value">
+          <span class="change-indicator {% if month_over_month_change >= 0 %}positive{% else %}negative{% endif %}">
+            {% if month_over_month_change >= 0 %}▲{% else %}▼{% endif %}
+            ${{ month_over_month_change_abs|floatformat:2|intcomma }}
+            <small>({{ month_over_month_percent|floatformat:1 }}%)</small>
+          </span>
+          <br>
+          <small class="text-muted" style="font-size: 0.7rem;">
+            {{ previous_month_display }}: ${{ previous_net_worth|floatformat:2|intcomma }} →
+            {{ latest_month_display }}: ${{ latest_net_worth|floatformat:2|intcomma }}
+          </small>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Asset Allocation -->
+  <div class="row mb-4">
+    <div class="col-lg-8">
+      <!-- Assets Breakdown -->
+      <div class="summary-card">
+        <div class="summary-header gradient-blue">
+          <h5 class="mb-0">📈 Assets Breakdown</h5>
+        </div>
+        <div style="padding: 24px;">
+
+          <!-- Liquid Assets -->
+          <h6 class="mb-3">💵 Liquid Assets: ${{ liquid_assets|floatformat:2|intcomma }}</h6>
+          {% if liquid_accounts %}
+          <table class="detail-table mb-4">
+            <thead>
+              <tr>
+                <th>Account</th>
+                <th>Type</th>
+                <th class="text-end">Balance</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for account in liquid_accounts %}
+              <tr>
+                <td>{{ account.name }}</td>
+                <td><small class="text-muted">{{ account.type }}</small></td>
+                <td class="text-end">${{ account.balance|floatformat:2|intcomma }}</td>
+              </tr>
+              {% endfor %}
+              <tr class="total-row">
+                <td colspan="2">Total Liquid Assets</td>
+                <td class="text-end">${{ liquid_assets|floatformat:2|intcomma }}</td>
+              </tr>
+            </tbody>
+          </table>
+          {% else %}
+          <p class="text-muted mb-4">No liquid asset accounts</p>
+          {% endif %}
+
+          <!-- Retirement Savings -->
+          <h6 class="mb-3">🏦 Retirement Savings (RRSP): ${{ retirement_assets|floatformat:2|intcomma }}</h6>
+          {% if retirement_accounts %}
+          <table class="detail-table mb-4">
+            <thead>
+              <tr>
+                <th>Account</th>
+                <th>Type</th>
+                <th class="text-end">Balance</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for account in retirement_accounts %}
+              <tr>
+                <td>{{ account.name }}</td>
+                <td><small class="text-muted">{{ account.type }}</small></td>
+                <td class="text-end">${{ account.balance|floatformat:2|intcomma }}</td>
+              </tr>
+              {% endfor %}
+              <tr class="total-row">
+                <td colspan="2">Total Retirement Savings</td>
+                <td class="text-end">${{ retirement_assets|floatformat:2|intcomma }}</td>
+              </tr>
+            </tbody>
+          </table>
+          {% else %}
+          <p class="text-muted mb-4">No retirement accounts</p>
+          {% endif %}
+
+          <!-- Property Assets -->
+          <h6 class="mb-3">🏠 Real Estate: ${{ total_property_value|floatformat:2|intcomma }}</h6>
+          {% if properties %}
+          <table class="detail-table">
+            <thead>
+              <tr>
+                <th>Property</th>
+                <th class="text-end">Market Value</th>
+                <th class="text-end">Mortgage</th>
+                <th class="text-end">Equity</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for property in properties %}
+              <tr>
+                <td>
+                  <strong>{{ property.name }}</strong>
+                  {% if property.notes %}
+                  <br><small class="text-muted">{{ property.notes|truncatewords:10 }}</small>
+                  {% endif %}
+                </td>
+                <td class="text-end">${{ property.market_value|floatformat:2|intcomma }}</td>
+                <td class="text-end text-danger">${{ property.mortgage_balance|floatformat:2|intcomma }}</td>
+                <td class="text-end"><strong>${{ property.equity|floatformat:2|intcomma }}</strong></td>
+              </tr>
+              {% endfor %}
+              <tr class="total-row">
+                <td>Total Real Estate</td>
+                <td class="text-end">${{ total_property_value|floatformat:2|intcomma }}</td>
+                <td class="text-end">${{ total_mortgages|floatformat:2|intcomma }}</td>
+                <td class="text-end">${{ total_property_equity|floatformat:2|intcomma }}</td>
+              </tr>
+            </tbody>
+          </table>
+          {% else %}
+          <p class="text-muted">No properties</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-4">
+      <!-- Asset Allocation Pie Chart -->
+      <div class="summary-card">
+        <div class="summary-header gradient-purple">
+          <h5 class="mb-0">🥧 Asset Allocation</h5>
+        </div>
+        <div class="allocation-pie" style="padding: 24px;">
+          <canvas id="allocationChart"></canvas>
+          <div class="mt-3 text-center">
+            <div class="mb-2">
+              <span style="color: #36a2eb;">●</span> Liquid: {{ liquid_percent|floatformat:1 }}%
+            </div>
+            <div class="mb-2">
+              <span style="color: #ff6384;">●</span> Retirement: {{ retirement_percent|floatformat:1 }}%
+            </div>
+            <div>
+              <span style="color: #ffce56;">●</span> Real Estate: {{ property_percent|floatformat:1 }}%
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Liabilities -->
+      <div class="summary-card">
+        <div class="summary-header gradient-red">
+          <h5 class="mb-0">💳 Liabilities</h5>
+        </div>
+        <div style="padding: 24px;">
+          <div class="mb-3">
+            <strong>Mortgages:</strong> ${{ total_mortgages|floatformat:2|intcomma }}
+          </div>
+          {% if credit_card_debt > 0 %}
+          <div class="mb-3">
+            <strong>Credit Cards:</strong> ${{ credit_card_debt|floatformat:2|intcomma }}
+            {% if credit_cards %}
+            <ul class="mt-2 mb-0" style="font-size: 0.9rem;">
+              {% for card in credit_cards %}
+              <li>{{ card.name }}: ${{ card.balance|floatformat:2|intcomma }}</li>
+              {% endfor %}
+            </ul>
+            {% endif %}
+          </div>
+          {% endif %}
+          <div class="total-row" style="padding-top: 12px; margin-top: 12px;">
+            <strong>Total Liabilities:</strong> ${{ total_liabilities|floatformat:2|intcomma }}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Net Worth Over Time -->
+  {% if historical_data %}
+  <div class="summary-card">
+    <div class="summary-header gradient-green">
+      <h5 class="mb-0">📈 Net Worth Progression (Month-End Closes)</h5>
+    </div>
+    <div class="chart-container">
+      <canvas id="netWorthChart"></canvas>
+    </div>
+  </div>
+
+  <!-- Asset Breakdown Over Time -->
+  <div class="summary-card">
+    <div class="summary-header gradient-blue">
+      <h5 class="mb-0">📊 Asset Breakdown Over Time</h5>
+    </div>
+    <div class="chart-container">
+      <canvas id="assetBreakdownChart"></canvas>
+    </div>
+  </div>
+
+  <!-- Historical Data Table -->
+  <div class="summary-card">
+    <div class="summary-header gradient-purple">
+      <h5 class="mb-0">📋 Historical Net Worth Data</h5>
+    </div>
+    <div class="table-responsive">
+      <table class="detail-table">
+        <thead>
+          <tr>
+            <th>Month</th>
+            <th class="text-end">Liquid</th>
+            <th class="text-end">Investment</th>
+            <th class="text-end">Property</th>
+            <th class="text-end">Liabilities</th>
+            <th class="text-end">Net Worth</th>
+            <th class="text-end">Change</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in historical_data %}
+          <tr>
+            <td><strong>{{ item.month_display }}</strong></td>
+            <td class="text-end">${{ item.liquid_assets|floatformat:2|intcomma }}</td>
+            <td class="text-end">${{ item.investment_assets|floatformat:2|intcomma }}</td>
+            <td class="text-end">${{ item.property_value|floatformat:2|intcomma }}</td>
+            <td class="text-end text-danger">${{ item.liabilities|floatformat:2|intcomma }}</td>
+            <td class="text-end"><strong>${{ item.total_net_worth|floatformat:2|intcomma }}</strong></td>
+            <td class="text-end">
+              {% if item.change is not None %}
+                <span class="{% if item.change >= 0 %}text-success{% else %}text-danger{% endif %}">
+                  {% if item.change >= 0 %}+{% endif %}${{ item.change|floatformat:2|intcomma }}
+                </span>
+              {% else %}
+                —
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% else %}
+  <div class="alert alert-info">
+    <strong>No historical data yet</strong>
+    <p class="mb-0 mt-2">Historical net worth data will appear here once you complete your first month-end close.</p>
+  </div>
+  {% endif %}
+
+  <div class="mt-4">
+    <a class="btn btn-outline-secondary" href="{% url 'dashboard' %}">
+      ← Back to Dashboard
+    </a>
+  </div>
+</div>
+
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+
+<script>
+  // Asset Allocation Pie Chart
+  const allocationCtx = document.getElementById('allocationChart');
+  if (allocationCtx) {
+    new Chart(allocationCtx, {
+      type: 'doughnut',
+      data: {
+        labels: ['Liquid Assets', 'Retirement Savings', 'Real Estate'],
+        datasets: [{
+          data: [
+            {{ liquid_assets|default:0 }},
+            {{ retirement_assets|default:0 }},
+            {{ total_property_value|default:0 }}
+          ],
+          backgroundColor: [
+            '#36a2eb',
+            '#ff6384',
+            '#ffce56'
+          ],
+          borderWidth: 2,
+          borderColor: '#fff'
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: true,
+        plugins: {
+          legend: {
+            display: false
+          }
+        }
+      }
+    });
+  }
+
+  // Net Worth Over Time Chart
+  {% if historical_data %}
+  const netWorthCtx = document.getElementById('netWorthChart');
+  if (netWorthCtx) {
+    new Chart(netWorthCtx, {
+      type: 'line',
+      data: {
+        labels: {{ chart_labels|safe }},
+        datasets: [{
+          label: 'Net Worth',
+          data: {{ chart_net_worth|safe }},
+          borderColor: '#11998e',
+          backgroundColor: 'rgba(17, 153, 142, 0.1)',
+          borderWidth: 3,
+          fill: true,
+          tension: 0.4
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            display: false
+          }
+        },
+        scales: {
+          y: {
+            beginAtZero: false,
+            ticks: {
+              callback: function(value) {
+                return '$' + value.toLocaleString();
+              }
+            }
+          }
+        }
+      }
+    });
+  }
+
+  // Asset Breakdown Stacked Area Chart
+  const assetBreakdownCtx = document.getElementById('assetBreakdownChart');
+  if (assetBreakdownCtx) {
+    new Chart(assetBreakdownCtx, {
+      type: 'line',
+      data: {
+        labels: {{ chart_labels|safe }},
+        datasets: [
+          {
+            label: 'Liquid Assets',
+            data: {{ chart_liquid|safe }},
+            borderColor: '#36a2eb',
+            backgroundColor: 'rgba(54, 162, 235, 0.5)',
+            borderWidth: 2,
+            fill: true,
+            tension: 0.4
+          },
+          {
+            label: 'Investment Assets',
+            data: {{ chart_investment|safe }},
+            borderColor: '#ff6384',
+            backgroundColor: 'rgba(255, 99, 132, 0.5)',
+            borderWidth: 2,
+            fill: true,
+            tension: 0.4
+          },
+          {
+            label: 'Property Equity',
+            data: {{ chart_property|safe }},
+            borderColor: '#ffce56',
+            backgroundColor: 'rgba(255, 206, 86, 0.5)',
+            borderWidth: 2,
+            fill: true,
+            tension: 0.4
+          },
+          {
+            label: 'Liabilities',
+            data: {{ chart_liabilities|safe }},
+            borderColor: '#ff6384',
+            backgroundColor: 'rgba(255, 99, 132, 0.3)',
+            borderWidth: 2,
+            borderDash: [5, 5],
+            fill: false,
+            tension: 0.4
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: {
+          mode: 'index',
+          intersect: false
+        },
+        plugins: {
+          legend: {
+            position: 'top'
+          }
+        },
+        scales: {
+          y: {
+            stacked: false,
+            beginAtZero: true,
+            ticks: {
+              callback: function(value) {
+                return '$' + value.toLocaleString();
+              }
+            }
+          }
+        }
+      }
+    });
+  }
+  {% endif %}
+</script>
+
+{% endblock %}

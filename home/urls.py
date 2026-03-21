@@ -17,6 +17,7 @@ urlpatterns = [
     path("update-expense/", views.update_expense, name="update_expense"),
     path("bank-accounts/", views.bank_accounts, name="bank_accounts"),
     path("accounts/<int:account_id>/", views.bank_account_detail, name="bank_account_detail"),
+    path("accounts/<int:account_id>/adjust-balance/", views.create_balance_adjustment, name="create_balance_adjustment"),
 
     path("import-transactions/", views.import_transactions, name="import_transactions"),
     path("import-batch/<int:batch_id>/", views.import_batch_detail, name="import_batch_detail"),
@@ -28,6 +29,7 @@ urlpatterns = [
     path("rental-properties/", views.rental_properties, name="rental_properties"),
     path("rental-properties/<int:property_id>/", views.rental_property_detail, name="rental_property_detail"),
     path("rental-properties/<int:property_id>/tax-summary/", views.rental_tax_summary, name="rental_tax_summary"),
+    path("rental-properties/<int:property_id>/tax-summary/export/", views.rental_tax_export, name="rental_tax_export"),
     path(
         "rental-properties/<int:property_id>/tax-summary/<int:cra_category_id>/",
         views.rental_tax_category_detail,
@@ -36,11 +38,17 @@ urlpatterns = [
     path("expenses/<int:expense_id>/edit/", views.expense_edit, name="expense_edit"),
     path("income/<int:income_id>/edit/", views.income_edit, name="income_edit"),
     path("transfers/<int:transfer_id>/edit/", views.transfer_edit, name="transfer_edit"),
+    path("balance-adjustments/<int:adjustment_id>/edit/", views.balance_adjustment_edit, name="balance_adjustment_edit"),
     path("unassigned-transactions/", views.unassigned_transactions, name="unassigned_transactions",),
 
     # Transfer API
     path('api/transfer/<int:transfer_id>/', views.get_transfer_api, name='get_transfer_api'),
 
+    # Month-End Close Wizard
+    path('month-end-close/', views.month_end_wizard, name='month_end_wizard'),
+
+    # Net Worth Tracker
+    path('net-worth/', views.net_worth_tracker, name='net_worth_tracker'),
 
 ]
 

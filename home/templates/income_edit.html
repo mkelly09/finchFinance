@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block content %}
+<div class="container mt-4" style="max-width: 980px;">
+  <h1 class="finch-page-header">✏️ Edit Income</h1>
+  <p class="finch-page-subtitle">
+    {{ income.date|date:"Y-m-d" }} — {{ income.category.name|default:"(no category)" }} — <span class="amount-income">${{ income.amount|floatformat:2|intcomma }}</span>
+  </p>
+
+  {% if messages %}
+    {% for message in messages %}
+      <div class="alert alert-{{ message.tags }} mb-3">{{ message }}</div>
+    {% endfor %}
+  {% endif %}
+
+  <div class="finch-card mb-4">
+    <div class="finch-card-header gradient-green">
+      <h5 class="mb-0">📝 Income Details</h5>
+    </div>
+
+      {% if form.errors %}
+        <div class="alert alert-danger">
+          <div class="fw-semibold mb-2">Please correct the errors below.</div>
+
+          {{ form.non_field_errors }}
+
+          <ul class="mb-0">
+            {% for field in form %}
+              {% for error in field.errors %}
+                <li><strong>{{ field.label }}:</strong> {{ error }}</li>
+              {% endfor %}
+            {% endfor %}
+          </ul>
+        </div>
+      {% endif %}
+
+      <form method="post">
+        {% csrf_token %}
+
+        <div class="row g-3">
+          <div class="col-md-3">
+            <label class="finch-form-label">Date</label>
+            {{ form.date }}
+          </div>
+
+          <div class="col-md-3">
+            <label class="finch-form-label">Amount</label>
+            {{ form.amount }}
+          </div>
+
+          <div class="col-md-3">
+            <label class="finch-form-label">Bank Account</label>
+            {{ form.bank_account }}
+          </div>
+
+          <div class="col-md-3 d-flex align-items-end">
+            <div class="form-check mb-2">
+              {{ form.taxable }}
+              <label class="form-check-label finch-form-label ms-1" for="{{ form.taxable.id_for_label }}">
+                Taxable
+              </label>
+            </div>
+          </div>
+
+          <div class="col-md-6">
+            <label class="finch-form-label">Category</label>
+            {{ form.category }}
+          </div>
+
+          <div class="col-md-6">
+            <label class="finch-form-label">Income Category</label>
+            {{ form.income_category }}
+          </div>
+
+          <div class="col-md-6">
+            <label class="finch-form-label">Rental Unit</label>
+            {{ form.rental_unit }}
+          </div>
+
+          <div class="col-md-12">
+            <label class="finch-form-label">Notes</label>
+            {{ form.notes }}
+          </div>
+        </div>
+
+        <hr class="my-4">
+
+        <div class="d-flex gap-2">
+          <button class="btn btn-primary finch-btn" type="submit">💾 Save Changes</button>
+          <a class="btn btn-outline-secondary finch-btn" href="{% url 'dashboard' %}?month={{ income.date|date:"Y-m" }}">
+            ← Back to Dashboard
+          </a>
+        </div>
+      </form>
+  </div>
+
+</div>
+{% endblock %}

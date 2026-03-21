@@ -154,14 +154,19 @@
 
 <div class="withholding-container mt-4">
   <div class="row align-items-end mb-4">
-    <div class="col-lg-8">
+    <div class="col-lg-7">
       <h1 class="mb-2">🏦 Withholding Buckets</h1>
       <p class="text-muted mb-0">
         Track your savings and future expense buckets. Balances are calculated from actual money movement
         (transfers and expenses). Activity shown for <strong>{{ selected_month_display }}</strong>.
       </p>
     </div>
-    <div class="col-lg-4 mt-3 mt-lg-0">
+    <div class="col-lg-2 mt-3 mt-lg-0">
+      <button type="button" class="btn btn-success w-100" onclick="openNewBucketModal()">
+        + New Bucket
+      </button>
+    </div>
+    <div class="col-lg-3 mt-3 mt-lg-0">
       <div class="header-controls">
         <form method="get" class="row g-2">
           <div class="col-12">
@@ -321,4 +326,95 @@
     </a>
   </div>
 </div>
+
+<!-- Backdrop -->
+<div id="modalBackdrop" style="
+  display:none; position:fixed; top:0; left:0; width:100%; height:100%;
+  background-color:rgba(0,0,0,0.5); z-index:999;">
+</div>
+
+<!-- New Bucket Modal -->
+<div id="newBucketModal" style="
+  display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%);
+  background:white; padding:30px; border-radius:12px; box-shadow:0 4px 20px rgba(0,0,0,0.3);
+  z-index:1000; width:600px; max-width:90%;">
+  <h3 class="mb-4">Create New Withholding Bucket</h3>
+  <form method="post" id="new-bucket-form">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="create_bucket" />
+
+    <div class="mb-3">
+      <label for="bucket-account" class="form-label">Withholding Account <span class="text-danger">*</span></label>
+      <select class="form-select" name="account" id="bucket-account" required>
+        <option value="">Select an account...</option>
+        {% for account in withholding_accounts %}
+          <option value="{{ account.id }}">{{ account.name }} ({{ account.institution }})</option>
+        {% endfor %}
+      </select>
+      <div class="form-text">Which withholding account should this bucket belong to?</div>
+    </div>
+
+    <div class="mb-3">
+      <label for="bucket-name" class="form-label">Bucket Name <span class="text-danger">*</span></label>
+      <input type="text" class="form-control" name="name" id="bucket-name" required
+             placeholder="e.g., Property Tax, Insurance, Emergency Fund">
+      <div class="form-text">A descriptive name for this savings bucket</div>
+    </div>
+
+    <div class="row">
+      <div class="col-md-6 mb-3">
+        <label for="bucket-monthly-target" class="form-label">Monthly Target</label>
+        <input type="number" step="0.01" class="form-control" name="monthly_target" id="bucket-monthly-target"
+               placeholder="0.00">
+        <div class="form-text">How much to contribute monthly (optional)</div>
+      </div>
+
+      <div class="col-md-6 mb-3">
+        <label for="bucket-target-amount" class="form-label">Goal Target</label>
+        <input type="number" step="0.01" class="form-control" name="target_amount" id="bucket-target-amount"
+               placeholder="0.00">
+        <div class="form-text">Total amount goal (optional)</div>
+      </div>
+    </div>
+
+    <div class="mb-4">
+      <label for="bucket-next-due" class="form-label">Next Due Date</label>
+      <input type="date" class="form-control" name="next_due_date" id="bucket-next-due">
+      <div class="form-text">When is this expense next due? (optional)</div>
+    </div>
+
+    <div class="d-flex justify-content-end gap-2">
+      <button type="button" class="btn btn-secondary" onclick="closeNewBucketModal()">Cancel</button>
+      <button type="submit" class="btn btn-success">Create Bucket</button>
+    </div>
+  </form>
+</div>
+
+<script>
+  function openNewBucketModal() {
+    document.getElementById('modalBackdrop').style.display = 'block';
+    document.getElementById('newBucketModal').style.display = 'block';
+  }
+
+  function closeNewBucketModal() {
+    document.getElementById('modalBackdrop').style.display = 'none';
+    document.getElementById('newBucketModal').style.display = 'none';
+    // Reset form
+    document.getElementById('new-bucket-form').reset();
+  }
+
+  // ESC key closes modal
+  document.addEventListener('keydown', function(event) {
+    if (event.key === 'Escape') {
+      closeNewBucketModal();
+    }
+  });
+
+  // Backdrop click closes modal
+  const backdropEl = document.getElementById('modalBackdrop');
+  if (backdropEl) {
+    backdropEl.addEventListener('click', closeNewBucketModal);
+  }
+</script>
+
 {% endblock %}

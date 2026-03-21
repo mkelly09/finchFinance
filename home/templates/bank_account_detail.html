@@ -1,6 +1,67 @@
 {% extends 'base.html' %}
 {% load humanize %}
 
+{% block extra_css %}
+<style>
+  /* Table Sorting Styles */
+  .sortable-table th.sortable {
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+    padding-right: 24px;
+    transition: background-color 0.2s ease;
+  }
+
+  .sortable-table th.sortable:hover {
+    background-color: #f8f9fa;
+  }
+
+  .sortable-table th.sortable .sort-arrow {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    opacity: 0.3;
+    font-size: 0.7rem;
+  }
+
+  .sortable-table th.sortable .sort-arrow::before {
+    content: "▼";
+  }
+
+  .sortable-table th.sortable.sort-asc .sort-arrow {
+    opacity: 1;
+  }
+
+  .sortable-table th.sortable.sort-asc .sort-arrow::before {
+    content: "▲";
+  }
+
+  .sortable-table th.sortable.sort-desc .sort-arrow {
+    opacity: 1;
+  }
+
+  .sortable-table th.sortable.sort-desc .sort-arrow::before {
+    content: "▼";
+  }
+
+  /* Month header rows */
+  .month-header-row {
+    background-color: #e9ecef !important;
+    font-weight: 600 !important;
+  }
+
+  .month-header-row:hover {
+    background-color: #e9ecef !important;
+  }
+
+  /* Transaction row hover */
+  .transaction-row:hover {
+    background-color: #f8f9fa;
+  }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="container mt-4">
   <!-- Breadcrumb -->
@@ -53,31 +114,93 @@
     </div>
   </div>
 
-  <!-- Month Selector -->
+  <!-- Balance Adjustment Form (for reconciliation) -->
+  {% if account.balance_tracking_enabled %}
+  <div class="finch-card mb-4">
+    <div class="finch-card-header gradient-orange">
+      <h4 class="mb-0">⚖️ Balance Adjustment (Reconciliation)</h4>
+    </div>
+    <div class="alert alert-info mb-3">
+      <small>
+        <strong>ℹ️ About Balance Adjustments:</strong>
+        Use this form to reconcile differences between the tracked balance and your actual bank statement.
+        Common uses: bank fees, interest earned, or other items not recorded as regular transactions.
+        All adjustments are logged in the audit trail.
+      </small>
+    </div>
+    <form method="post" action="{% url 'create_balance_adjustment' account.id %}">
+      {% csrf_token %}
+      <div class="row g-3">
+        <div class="col-md-3">
+          <label for="adjustment_date" class="finch-form-label">Date</label>
+          <input type="date" name="adjustment_date" id="adjustment_date" class="form-control" required>
+        </div>
+        <div class="col-md-3">
+          <label for="amount" class="finch-form-label">Amount</label>
+          <input type="number" step="0.01" name="amount" id="amount" class="form-control"
+                 placeholder="e.g., 10.50 or -25.00" required>
+          <small class="text-muted">Positive = increase, Negative = decrease</small>
+        </div>
+        <div class="col-md-6">
+          <label for="reason" class="finch-form-label">Reason</label>
+          <input type="text" name="reason" id="reason" class="form-control"
+                 placeholder="e.g., Bank reconciliation, Monthly interest" required>
+        </div>
+      </div>
+      <div class="row g-3 mt-2">
+        <div class="col-md-12">
+          <label for="notes" class="finch-form-label">Notes (Optional)</label>
+          <textarea name="notes" id="notes" class="form-control" rows="2"
+                    placeholder="Additional details about this adjustment..."></textarea>
+        </div>
+      </div>
+      <div class="mt-3">
+        <button type="submit" class="btn btn-warning finch-btn">
+          💾 Create Balance Adjustment
+        </button>
+      </div>
+    </form>
+  </div>
+  {% endif %}
+
+  <!-- Date Range Selector -->
   <div class="finch-card mb-4">
     <form method="get" class="row g-3 align-items-end">
-      <div class="col-md-8">
-        <label for="month" class="finch-form-label">📅 Select Month</label>
-        <input type="month" name="month" id="month" class="form-control" value="{{ selected_month }}">
+      <div class="col-md-4">
+        <label for="start_date" class="finch-form-label">📅 Start Date</label>
+        <input type="date" name="start_date" id="start_date" class="form-control" value="{{ start_date|date:'Y-m-d' }}">
       </div>
       <div class="col-md-4">
-        <button type="submit" class="btn btn-primary finch-btn w-100">View Ledger</button>
+        <label for="end_date" class="finch-form-label">📅 End Date</label>
+        <input type="date" name="end_date" id="end_date" class="form-control" value="{{ end_date|date:'Y-m-d' }}">
+      </div>
+      <div class="col-md-4">
+        <button type="submit" class="btn btn-primary finch-btn w-100">Update Ledger</button>
       </div>
     </form>
   </div>
 
   <!-- Summary Cards -->
   <div class="row g-3 mb-4">
-    <div class="col-md-4">
+    <div class="col-md-3">
       <div class="finch-summary-card">
         <div class="finch-summary-icon">📅</div>
         <div class="finch-summary-label">Period</div>
-        <div class="finch-summary-value" style="font-size: 1.5rem; color: #495057;">
-          {{ selected_month_display }}
+        <div class="finch-summary-value" style="font-size: 1.2rem; color: #495057;">
+          {{ date_range_display }}
         </div>
       </div>
     </div>
-    <div class="col-md-4">
+    <div class="col-md-3">
+      <div class="finch-summary-card border-start-blue">
+        <div class="finch-summary-icon">🏦</div>
+        <div class="finch-summary-label">Starting Balance</div>
+        <div class="finch-summary-value" style="font-size: 1.5rem; color: #495057;">
+          ${{ starting_balance|floatformat:2|intcomma }}
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3">
       <div class="finch-summary-card border-start-green">
         <div class="finch-summary-icon">💰</div>
         <div class="finch-summary-label">Total Inflow</div>
@@ -86,7 +209,7 @@
         </div>
       </div>
     </div>
-    <div class="col-md-4">
+    <div class="col-md-3">
       <div class="finch-summary-card border-start-red">
         <div class="finch-summary-icon">💸</div>
         <div class="finch-summary-label">Total Outflow</div>
@@ -94,16 +217,10 @@
           −${{ total_outflow|floatformat:2|intcomma }}
         </div>
         <div class="mt-2 pt-2 border-top">
-          <small class="text-muted d-block mb-1">Net Change:</small>
-          {% if net_change >= 0 %}
-            <span class="amount-income" style="font-size: 1.25rem;">
-              +${{ net_change|floatformat:2|intcomma }}
-            </span>
-          {% else %}
-            <span class="amount-expense" style="font-size: 1.25rem;">
-              −${{ net_change|floatformat:2|intcomma|cut:"-" }}
-            </span>
-          {% endif %}
+          <small class="text-muted d-block mb-1">Ending Balance:</small>
+          <span style="font-size: 1.25rem; font-weight: 600; color: #495057;">
+            ${{ ending_balance|floatformat:2|intcomma }}
+          </span>
         </div>
       </div>
     </div>
@@ -112,74 +229,117 @@
   <!-- Ledger table -->
   <div class="finch-card">
     <div class="finch-card-header gradient-purple">
-      <h4 class="mb-0">📝 Transactions for {{ selected_month_display }}</h4>
+      <h4 class="mb-0">📝 Transaction Ledger</h4>
     </div>
 
-      {% if entries %}
+      {% if entries_by_month %}
         <div class="table-responsive">
-          <table class="table finch-table table-hover align-middle">
+          <table class="table finch-table table-hover align-middle sortable-table" id="ledger-table">
             <thead>
               <tr>
-                <th style="width: 130px;">Date</th>
-                <th style="width: 80px;">Type</th>
-                <th>Description</th>
-                <th style="width: 140px;" class="text-end">Amount</th>
-                <th style="width: 220px;">Notes</th>
-                <th style="width: 80px;">Actions</th>
+                <th class="sortable" data-sort="date" style="width: 110px;">Date <span class="sort-arrow"></span></th>
+                <th class="sortable" data-sort="type" style="width: 100px;">Type <span class="sort-arrow"></span></th>
+                <th class="sortable" data-sort="description">Description <span class="sort-arrow"></span></th>
+                <th class="sortable text-end" data-sort="amount" style="width: 120px;">Amount <span class="sort-arrow"></span></th>
+                <th class="sortable text-end" data-sort="balance" style="width: 140px;">Balance <span class="sort-arrow"></span></th>
+                <th class="sortable" data-sort="notes" style="width: 180px;">Notes <span class="sort-arrow"></span></th>
+                <th style="width: 70px;">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {% for e in entries %}
-                <tr>
-                  <td>{{ e.date }}</td>
-                  <td>
-                    {% if e.kind == "income" %}
-                      <span class="badge bg-success-subtle text-success border border-success-subtle">Income</span>
-                    {% elif e.kind == "expense" %}
-                      <span class="badge bg-danger-subtle text-danger border border-danger-subtle">Expense</span>
-                    {% elif e.kind == "transfer" %}
-                      {% if e.is_inflow %}
-                        <span class="badge bg-info-subtle text-info border border-info-subtle">Transfer in</span>
+              {% for month_group in entries_by_month %}
+                <!-- Month Header Row -->
+                <tr class="table-secondary month-header-row" style="font-weight: 600;">
+                  <td colspan="7" style="background-color: #e9ecef;">
+                    📅 {{ month_group.month }}
+                    <span class="float-end" style="font-size: 0.9rem;">
+                      <span class="text-success">+${{ month_group.month_inflow|floatformat:2|intcomma }}</span>
+                      <span class="text-muted mx-2">|</span>
+                      <span class="text-danger">−${{ month_group.month_outflow|floatformat:2|intcomma }}</span>
+                      <span class="text-muted mx-2">|</span>
+                      Net:
+                      {% if month_group.month_net >= 0 %}
+                        <span class="text-success">+${{ month_group.month_net|floatformat:2|intcomma }}</span>
                       {% else %}
-                        <span class="badge bg-warning-subtle text-warning border border-warning-subtle">Transfer out</span>
+                        <span class="text-danger">−${{ month_group.month_net|floatformat:2|intcomma|cut:"-" }}</span>
                       {% endif %}
-                    {% else %}
-                      {{ e.kind|title }}
-                    {% endif %}
-                  </td>
-                  <td>{{ e.description }}</td>
-                  <td class="text-end">
-                    {% if e.signed_amount >= 0 %}
-                      <span class="amount-income">+${{ e.signed_amount|floatformat:2|intcomma }}</span>
-                    {% else %}
-                      <span class="amount-expense">−${{ e.signed_amount|floatformat:2|intcomma|cut:"-" }}</span>
-                    {% endif %}
-                  </td>
-                  <td>{{ e.notes }}</td>
-                  <td class="text-center">
-                    {% if e.income_id %}
-                      <a href="{% url 'income_edit' e.income_id %}"
-                         class="btn btn-sm btn-outline-primary finch-btn-sm"
-                         title="Edit income">
-                        ✏️
-                      </a>
-                    {% elif e.expense_id %}
-                      <a href="{% url 'expense_edit' e.expense_id %}"
-                         class="btn btn-sm btn-outline-primary finch-btn-sm"
-                         title="Edit expense">
-                        ✏️
-                      </a>
-                    {% elif e.transfer_id %}
-                      <a href="{% url 'transfer_edit' e.transfer_id %}"
-                         class="btn btn-sm btn-outline-primary finch-btn-sm"
-                         title="Edit transfer">
-                        ✏️
-                      </a>
-                    {% else %}
-                      <span class="text-muted small">—</span>
-                    {% endif %}
+                    </span>
                   </td>
                 </tr>
+
+                {% for e in month_group.entries %}
+                  <tr class="transaction-row"
+                      data-date="{{ e.date }}"
+                      data-type="{{ e.kind }}"
+                      data-description="{{ e.description }}"
+                      data-amount="{{ e.signed_amount }}"
+                      data-balance="{{ e.balance }}"
+                      data-notes="{{ e.notes }}">
+                    <td>{{ e.date|date:"M d" }}</td>
+                    <td>
+                      {% if e.kind == "income" %}
+                        <span class="badge bg-success-subtle text-success border border-success-subtle">Income</span>
+                      {% elif e.kind == "expense" %}
+                        <span class="badge bg-danger-subtle text-danger border border-danger-subtle">Expense</span>
+                      {% elif e.kind == "adjustment" %}
+                        <span class="badge bg-warning-subtle text-warning border border-warning-subtle">Adjustment</span>
+                      {% elif e.kind == "transfer" %}
+                        {% if e.is_inflow %}
+                          <span class="badge bg-info-subtle text-info border border-info-subtle">Transfer in</span>
+                        {% else %}
+                          <span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle">Transfer out</span>
+                        {% endif %}
+                      {% else %}
+                        {{ e.kind|title }}
+                      {% endif %}
+                    </td>
+                    <td>{{ e.description }}</td>
+                    <td class="text-end">
+                      {% if e.signed_amount >= 0 %}
+                        <span class="amount-income">+${{ e.signed_amount|floatformat:2|intcomma }}</span>
+                      {% else %}
+                        <span class="amount-expense">−${{ e.signed_amount|floatformat:2|intcomma|cut:"-" }}</span>
+                      {% endif %}
+                    </td>
+                    <td class="text-end" style="font-weight: 600;">
+                      {% if account.balance_tracking_enabled and account.balance_tracking_start_date and e.date >= account.balance_tracking_start_date %}
+                        ${{ e.balance|floatformat:2|intcomma }}
+                      {% else %}
+                        <span class="text-muted">—</span>
+                      {% endif %}
+                    </td>
+                    <td><small>{{ e.notes|truncatewords:10 }}</small></td>
+                    <td class="text-center">
+                      {% if e.income_id %}
+                        <a href="{% url 'income_edit' e.income_id %}"
+                           class="btn btn-sm btn-outline-primary finch-btn-sm"
+                           title="Edit income">
+                          ✏️
+                        </a>
+                      {% elif e.expense_id %}
+                        <a href="{% url 'expense_edit' e.expense_id %}"
+                           class="btn btn-sm btn-outline-primary finch-btn-sm"
+                           title="Edit expense">
+                          ✏️
+                        </a>
+                      {% elif e.transfer_id %}
+                        <a href="{% url 'transfer_edit' e.transfer_id %}"
+                           class="btn btn-sm btn-outline-primary finch-btn-sm"
+                           title="Edit transfer">
+                          ✏️
+                        </a>
+                      {% elif e.adjustment_id %}
+                        <a href="{% url 'balance_adjustment_edit' e.adjustment_id %}"
+                           class="btn btn-sm btn-outline-warning finch-btn-sm"
+                           title="Edit adjustment">
+                          ✏️
+                        </a>
+                      {% else %}
+                        <span class="text-muted small">—</span>
+                      {% endif %}
+                    </td>
+                  </tr>
+                {% endfor %}
               {% endfor %}
             </tbody>
           </table>
@@ -188,7 +348,7 @@
         <div class="finch-empty-state">
           <div class="finch-empty-icon">📭</div>
           <h3>No Transactions</h3>
-          <p>No transactions recorded for this account in {{ selected_month_display }}.</p>
+          <p>No transactions recorded for this account in the selected date range.</p>
         </div>
       {% endif %}
   </div>
@@ -199,4 +359,107 @@
     </a>
   </div>
 </div>
+
+<script>
+// ============================================
+// TABLE SORTING FUNCTIONALITY
+// ============================================
+
+/**
+ * Initialize sorting for a table
+ * @param {string} tableId - ID of the table to make sortable
+ * @param {object} columnConfig - Configuration for how to extract and compare values
+ */
+function initTableSorting(tableId, columnConfig) {
+  const table = document.getElementById(tableId);
+  if (!table) return;
+
+  const tbody = table.querySelector('tbody');
+  const headers = table.querySelectorAll('th.sortable');
+
+  headers.forEach(header => {
+    header.addEventListener('click', () => {
+      const sortKey = header.getAttribute('data-sort');
+      const currentSort = header.classList.contains('sort-asc') ? 'asc' :
+                         header.classList.contains('sort-desc') ? 'desc' : 'none';
+
+      // Determine new sort direction
+      let newSort;
+      if (currentSort === 'none' || currentSort === 'desc') {
+        newSort = 'asc';
+      } else {
+        newSort = 'desc';
+      }
+
+      // Remove sort classes from all headers
+      headers.forEach(h => h.classList.remove('sort-asc', 'sort-desc'));
+
+      // Add sort class to clicked header
+      header.classList.add(`sort-${newSort}`);
+
+      // Sort the rows
+      sortTable(tbody, sortKey, newSort, columnConfig[sortKey]);
+    });
+  });
+}
+
+/**
+ * Sort table rows (skips month header rows)
+ * @param {HTMLElement} tbody - Table body element
+ * @param {string} sortKey - Key identifying which column to sort by
+ * @param {string} direction - 'asc' or 'desc'
+ * @param {function} extractor - Function to extract sortable value from row
+ */
+function sortTable(tbody, sortKey, direction, extractor) {
+  // Separate transaction rows from month headers
+  const allRows = Array.from(tbody.querySelectorAll('tr'));
+  const transactionRows = allRows.filter(row => row.classList.contains('transaction-row'));
+  const monthHeaders = allRows.filter(row => row.classList.contains('month-header-row'));
+
+  // Sort only the transaction rows
+  transactionRows.sort((a, b) => {
+    const aVal = extractor(a);
+    const bVal = extractor(b);
+
+    if (aVal === bVal) return 0;
+
+    let result;
+    if (typeof aVal === 'number' && typeof bVal === 'number') {
+      result = aVal - bVal;
+    } else {
+      result = String(aVal).localeCompare(String(bVal));
+    }
+
+    return direction === 'asc' ? result : -result;
+  });
+
+  // Clear tbody
+  tbody.innerHTML = '';
+
+  // Re-append all transaction rows (month headers are removed when sorting)
+  transactionRows.forEach(row => tbody.appendChild(row));
+}
+
+// Helper to parse date from YYYY-MM-DD format
+function parseDate(dateStr) {
+  return new Date(dateStr).getTime();
+}
+
+// Helper to parse dollar amount
+function parseAmount(amountStr) {
+  return parseFloat(amountStr.replace(/[$,]/g, '')) || 0;
+}
+
+// ============================================
+// LEDGER TABLE CONFIGURATION
+// ============================================
+initTableSorting('ledger-table', {
+  date: (row) => parseDate(row.getAttribute('data-date')),
+  type: (row) => row.getAttribute('data-type'),
+  description: (row) => row.getAttribute('data-description').toLowerCase(),
+  amount: (row) => parseAmount(row.getAttribute('data-amount')),
+  balance: (row) => parseAmount(row.getAttribute('data-balance')),
+  notes: (row) => row.getAttribute('data-notes').toLowerCase()
+});
+</script>
 {% endblock %}

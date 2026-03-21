@@ -2,6 +2,61 @@
 {% load finance_filters %}
 
 {% block content %}
+
+<style>
+  /* Hover effects for table rows */
+  .finch-table tbody tr {
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+  }
+
+  .finch-table tbody tr:hover {
+    background-color: #f8f9fa;
+  }
+
+  /* Table Sorting Styles */
+  .sortable-table th.sortable {
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+    padding-right: 24px;
+    transition: background-color 0.2s ease;
+  }
+
+  .sortable-table th.sortable:hover {
+    background-color: #e9ecef;
+  }
+
+  .sortable-table th.sortable .sort-arrow {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    opacity: 0.3;
+    font-size: 0.7rem;
+  }
+
+  .sortable-table th.sortable .sort-arrow::before {
+    content: "▼";
+  }
+
+  .sortable-table th.sortable.sort-asc .sort-arrow {
+    opacity: 1;
+  }
+
+  .sortable-table th.sortable.sort-asc .sort-arrow::before {
+    content: "▲";
+  }
+
+  .sortable-table th.sortable.sort-desc .sort-arrow {
+    opacity: 1;
+  }
+
+  .sortable-table th.sortable.sort-desc .sort-arrow::before {
+    content: "▼";
+  }
+</style>
+
 <div class="container mt-4">
 
   <!-- Breadcrumb -->
@@ -88,19 +143,23 @@
 
       {% if derived_rows %}
         <div class="table-responsive">
-          <table class="table finch-table table-sm align-middle">
+          <table class="table finch-table sortable-table table-sm align-middle" id="transactions-table">
             <thead>
               <tr>
-                <th style="width: 120px;">Date</th>
-                <th style="width: 140px;">Type</th>
-                <th>Description</th>
-                <th class="text-end" style="width: 140px;">Amount</th>
-                <th style="width: 80px;">Actions</th>
+                <th class="sortable" data-sort="date" style="width: 120px;">Date <span class="sort-arrow"></span></th>
+                <th class="sortable" data-sort="type" style="width: 140px;">Type <span class="sort-arrow"></span></th>
+                <th class="sortable" data-sort="description">Description <span class="sort-arrow"></span></th>
+                <th class="sortable text-end" data-sort="amount" style="width: 140px;">Amount <span class="sort-arrow"></span></th>
               </tr>
             </thead>
             <tbody>
               {% for row in derived_rows %}
-                <tr>
+                <tr data-transaction-type="{% if row.expense_id %}expense{% elif row.transfer_id %}transfer{% else %}other{% endif %}"
+                    data-transaction-id="{% if row.expense_id %}{{ row.expense_id }}{% elif row.transfer_id %}{{ row.transfer_id }}{% endif %}"
+                    {% if row.expense_id %}
+                      data-expense-obj="{{ row.expense_obj|safe }}"
+                    {% endif %}
+                    onclick="handleRowClick(this)">
                   <td>{{ row.date|date:"Y-m-d" }}</td>
                   <td>
                     {% if row.kind == "transfer_in" %}
@@ -119,23 +178,6 @@
                       <span class="amount-income">+{{ row.signed_amount|currency }}</span>
                     {% else %}
                       <span class="amount-expense">-{{ row.signed_amount|negate|currency }}</span>
-                    {% endif %}
-                  </td>
-                  <td class="text-center">
-                    {% if row.expense_id %}
-                      <a href="{% url 'expense_edit' row.expense_id %}"
-                         class="btn btn-sm btn-outline-primary finch-btn-sm"
-                         title="Edit expense">
-                        ✏️
-                      </a>
-                    {% elif row.transfer_id %}
-                      <a href="{% url 'transfer_edit' row.transfer_id %}"
-                         class="btn btn-sm btn-outline-primary finch-btn-sm"
-                         title="Edit transfer">
-                        ✏️
-                      </a>
-                    {% else %}
-                      <span class="text-muted small">—</span>
                     {% endif %}
                   </td>
                 </tr>
@@ -159,4 +201,699 @@
   </div>
 
 </div>
+
+<!-- Backdrop -->
+<div id="modalBackdrop" style="
+  display:none; position:fixed; top:0; left:0; width:100%; height:100%;
+  background-color:rgba(0,0,0,0.5); z-index:999;">
+</div>
+
+<!-- Expense Edit Modal -->
+<div id="editExpenseModal" style="
+  display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%);
+  background:white; padding:20px; border-radius:8px; box-shadow:0 4px 10px rgba(0,0,0,0.3);
+  z-index:1000; width:600px; max-width:90%;">
+  <h3 class="mb-3">Edit Expense</h3>
+  <form method="post" id="edit-expense-form">
+    {% csrf_token %}
+    <input type="hidden" name="expense_id" id="edit-expense-id" />
+
+    <div class="container-fluid">
+      <div class="row mb-2">
+        <div class="col-4">
+          <label for="edit-date" class="form-label">Date:</label>
+          <input type="date" class="form-control" name="date" id="edit-date" required />
+        </div>
+        <div class="col-8">
+          <label for="edit-vendor" class="form-label">Vendor:</label>
+          <input type="text" class="form-control" name="vendor_name" id="edit-vendor" />
+        </div>
+      </div>
+
+      <div class="row mb-2">
+        <div class="col-4">
+          <label for="edit-category" class="form-label">Category:</label>
+          <select class="form-select" name="category" id="edit-category">
+            {% for cat in all_categories %}
+              <option value="{{ cat.name }}">{{ cat.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-4">
+          <label for="edit-location" class="form-label">Location:</label>
+          <input type="text" class="form-control" name="location" id="edit-location" />
+        </div>
+        <div class="col-4">
+          <label for="edit-amount" class="form-label">Amount:</label>
+          <input type="number" step="0.01" class="form-control" name="amount" id="edit-amount" required />
+        </div>
+      </div>
+
+      <div class="row mb-2">
+        <div class="col-6">
+          <label for="edit-bank-account" class="form-label">Bank Account:</label>
+          <select class="form-select" name="bank_account" id="edit-bank-account">
+            <option value="">—</option>
+            {% for account in accounts %}
+              <option value="{{ account.id }}">{{ account.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-6">
+          <label for="edit-rental-unit" class="form-label">Rental Unit (optional):</label>
+          <select class="form-select" name="rental_unit" id="edit-rental-unit">
+            <option value="">—</option>
+            {% for u in all_rental_units %}
+              <option value="{{ u.id }}">
+                {{ u.property.name }} — {{ u.name }}
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+
+      <div class="row mb-2">
+        <div class="col-12">
+          <label for="edit-cra-category" class="form-label">CRA Rental Category (optional):</label>
+          <select class="form-select" name="cra_category" id="edit-cra-category">
+            <option value="">—</option>
+            {% for c in cra_categories %}
+              <option value="{{ c.id }}">{{ c.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+
+      <div class="row mb-2">
+        <div class="col-12">
+          <label for="edit-notes" class="form-label">Notes:</label>
+          <input type="text" class="form-control" name="notes" id="edit-notes" />
+        </div>
+      </div>
+
+      <div class="d-flex justify-content-between align-items-center mt-3">
+        <a
+          id="expense-advanced-link"
+          class="btn btn-outline-secondary"
+          href="#"
+          target="_blank"
+          rel="noopener"
+          onclick="event.stopPropagation();"
+        >
+          Receipts / Advanced…
+        </a>
+
+        <div>
+          <button type="submit" class="btn btn-primary me-2">Save Changes</button>
+          <button type="submit" name="delete_expense" value="1"
+                  class="btn btn-danger me-2"
+                  onclick="return confirm('Are you sure?');">Delete</button>
+          <button type="button" class="btn btn-secondary" onclick="closeEditModal()">Cancel</button>
+        </div>
+      </div>
+
+    </div>
+  </form>
+</div>
+
+<!-- Transfer Modal -->
+<div id="editTransferModal" style="
+  display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%);
+  background:white; padding:20px; border-radius:8px; box-shadow:0 4px 10px rgba(0,0,0,0.3);
+  z-index:1000; width:600px; max-width:90%;">
+  <h3 class="mb-3">Edit Transfer</h3>
+  <form method="post" id="edit-transfer-form">
+    {% csrf_token %}
+    <input type="hidden" name="transfer_id" id="edit-transfer-id" />
+
+    <div class="container-fluid">
+      <!-- Main transfer fields (hidden when in split mode) -->
+      <div id="main-transfer-fields">
+        <div class="row mb-2">
+          <div class="col-6">
+            <label for="edit-transfer-date" class="form-label">Date:</label>
+            <input type="date" class="form-control" name="date" id="edit-transfer-date" required />
+          </div>
+          <div class="col-6">
+            <label for="edit-transfer-amount" class="form-label">Amount:</label>
+            <input type="number" step="0.01" class="form-control" name="amount" id="edit-transfer-amount" required />
+          </div>
+        </div>
+
+        <div class="row mb-2">
+          <div class="col-6">
+            <label for="edit-transfer-from" class="form-label">From Account:</label>
+            <select name="from_account" id="edit-transfer-from" class="form-select">
+              <option value="">—</option>
+              {% for account in accounts %}
+                <option value="{{ account.id }}">{{ account.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-6">
+            <label for="edit-transfer-to" class="form-label">To Account:</label>
+            <select name="to_account" id="edit-transfer-to" class="form-select">
+              <option value="">—</option>
+              {% for account in accounts %}
+                <option value="{{ account.id }}">{{ account.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+
+        <div class="row mb-2">
+          <div class="col-12">
+            <label for="edit-transfer-withholding" class="form-label">Withholding Bucket (optional):</label>
+            <select name="withholding_category" id="edit-transfer-withholding" class="form-select">
+              <option value="">—</option>
+              {% for bucket in withholding_categories %}
+                <option value="{{ bucket.id }}">
+                  {{ bucket.account.name }} — {{ bucket.name }}
+                </option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+
+        <div class="row mb-3">
+          <div class="col-12">
+            <label for="edit-transfer-notes" class="form-label">Notes:</label>
+            <input type="text" class="form-control" name="notes" id="edit-transfer-notes" />
+          </div>
+        </div>
+
+        <!-- Add split buttons (only shown for non-split transfers) -->
+        <div id="split-buttons" class="mt-3" style="display: none;">
+          <p class="text-muted small">Split this transfer into multiple parts:</p>
+          <button type="button" class="btn btn-sm btn-outline-primary me-2" onclick="initializeSplitMode(2)">2 Splits</button>
+          <button type="button" class="btn btn-sm btn-outline-primary me-2" onclick="initializeSplitMode(3)">3 Splits</button>
+          <button type="button" class="btn btn-sm btn-outline-primary me-2" onclick="initializeSplitMode(4)">4 Splits</button>
+          <button type="button" class="btn btn-sm btn-outline-primary" onclick="initializeSplitMode(5)">5 Splits</button>
+        </div>
+      </div>
+
+      <!-- Split section (shown when editing splits) -->
+      <div id="split-section" style="display: none;">
+        <div class="split-header mb-3 d-flex justify-content-between align-items-center">
+          <h5 class="mb-0">Split Details</h5>
+          <button type="button" class="btn btn-sm btn-secondary" onclick="cancelSplitMode()">
+            Cancel Split
+          </button>
+        </div>
+
+        <input type="hidden" name="split_mode" id="split-mode-input" value="0">
+        <input type="hidden" id="original-transfer-amount">
+
+        <div id="split-rows-container">
+          <!-- Split rows will be dynamically added here -->
+        </div>
+
+        <button type="button" class="btn btn-sm btn-outline-primary mt-2" onclick="addSplitRow()">
+          + Add Another Split
+        </button>
+
+        <div id="split-validation" class="mt-3">
+          <!-- Validation message appears here -->
+        </div>
+      </div>
+
+      <!-- Split child editing message -->
+      <div id="split-child-message" class="alert alert-info" style="display: none;">
+        <strong>Note:</strong> This is part of a split transfer.
+        <a href="#" id="view-parent-link" onclick="event.preventDefault(); openTransferEditModal(this.dataset.parentId)">
+          View parent transfer
+        </a>
+      </div>
+
+      <!-- Footer buttons -->
+      <div class="text-end mt-3">
+        <button type="submit" class="btn btn-primary me-2" id="save-transfer-btn">Save Changes</button>
+        <button
+          type="submit"
+          name="delete_transfer"
+          value="1"
+          class="btn btn-danger me-2"
+          onclick="return confirm('Delete this transfer?');"
+        >Delete</button>
+        <button type="button" class="btn btn-secondary" onclick="closeTransferModal()">Cancel</button>
+      </div>
+    </div>
+  </form>
+</div>
+
+<!-- Split row template (hidden, used for cloning) -->
+<template id="split-row-template">
+  <div class="split-row mb-3 p-3" data-split-index="0" style="background: #f8f9fa; border: 1px solid #ddd; border-radius: 4px;">
+    <div class="split-row-header d-flex justify-content-between mb-2">
+      <strong>Split <span class="split-number">1</span></strong>
+      <button type="button" class="btn btn-sm btn-danger" onclick="removeSplitRow(this)">Remove</button>
+    </div>
+    <div class="row">
+      <div class="col-6">
+        <label class="form-label">Amount:</label>
+        <input type="number" name="split-0-amount" class="form-control split-amount-input"
+               step="0.01" min="0.01" required>
+      </div>
+      <div class="col-6">
+        <label class="form-label">From Account:</label>
+        <select name="split-0-from_account" class="form-select">
+          <option value="">—</option>
+          {% for account in accounts %}
+          <option value="{{ account.id }}">{{ account.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    <div class="row mt-2">
+      <div class="col-6">
+        <label class="form-label">To Account:</label>
+        <select name="split-0-to_account" class="form-select">
+          <option value="">—</option>
+          {% for account in accounts %}
+          <option value="{{ account.id }}">{{ account.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-6">
+        <label class="form-label">Withholding Bucket:</label>
+        <select name="split-0-withholding_category" class="form-select">
+          <option value="">—</option>
+          {% for bucket in withholding_categories %}
+          <option value="{{ bucket.id }}">{{ bucket.account.name }} — {{ bucket.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    <div class="mt-2">
+      <label class="form-label">Notes:</label>
+      <input type="text" name="split-0-notes" class="form-control">
+    </div>
+  </div>
+</template>
+
+<script>
+  const EXPENSE_EDIT_URL_TEMPLATE = "{% url 'expense_edit' 999999 %}";
+
+  // Handle row click - check transaction type and open appropriate modal
+  function handleRowClick(row) {
+    const transactionType = row.dataset.transactionType;
+    const transactionId = row.dataset.transactionId;
+
+    if (transactionType === 'expense' && transactionId) {
+      const expenseData = JSON.parse(row.dataset.expenseObj || '{}');
+      openEditModal(
+        expenseData.id,
+        expenseData.date,
+        expenseData.vendor_name,
+        expenseData.category_name,
+        expenseData.location,
+        expenseData.amount,
+        expenseData.notes,
+        expenseData.rental_unit_id,
+        expenseData.cra_category_id,
+        expenseData.rental_business_use_pct,
+        expenseData.bank_account_id
+      );
+    } else if (transactionType === 'transfer' && transactionId) {
+      openTransferEditModal(transactionId);
+    }
+  }
+
+  // Expense modal open/close
+  function openEditModal(
+    id,
+    date,
+    vendor,
+    category,
+    location,
+    amount,
+    notes,
+    rentalUnitId,
+    craCategoryId,
+    rentalPct,
+    bankAccountId
+  ) {
+    document.getElementById("edit-expense-id").value = id;
+    document.getElementById("edit-date").value = date;
+    document.getElementById("edit-vendor").value = vendor;
+    document.getElementById("edit-category").value = category;
+    document.getElementById("edit-location").value = location;
+    document.getElementById("edit-amount").value = amount;
+    document.getElementById("edit-notes").value = notes;
+
+    document.getElementById("edit-rental-unit").value = rentalUnitId || "";
+    document.getElementById("edit-cra-category").value = craCategoryId || "";
+
+    const bankSelect = document.getElementById("edit-bank-account");
+    if (bankSelect) {
+      bankSelect.value = bankAccountId || "";
+    }
+
+    const advLink = document.getElementById("expense-advanced-link");
+    if (advLink) {
+      advLink.href = EXPENSE_EDIT_URL_TEMPLATE.replace("999999", String(id));
+    }
+
+    document.getElementById("modalBackdrop").style.display = "block";
+    document.getElementById("editExpenseModal").style.display = "block";
+  }
+
+  function closeEditModal() {
+    const modal = document.getElementById("editExpenseModal");
+    const backdrop = document.getElementById("modalBackdrop");
+    if (modal) modal.style.display = "none";
+    if (backdrop) backdrop.style.display = "none";
+  }
+
+  // Transfer modal open/close with split support
+  let splitCounter = 0;
+  let currentTransferData = null;
+
+  function openTransferEditModal(id) {
+    // Fetch transfer data including split info
+    fetch(`/api/transfer/${id}/`)
+      .then(response => response.json())
+      .then(data => {
+        currentTransferData = data;
+        populateTransferModal(data);
+        document.getElementById("modalBackdrop").style.display = "block";
+        document.getElementById("editTransferModal").style.display = "block";
+      })
+      .catch(error => {
+        console.error('Error fetching transfer:', error);
+        alert('Error loading transfer data');
+      });
+  }
+
+  function populateTransferModal(transfer) {
+    document.getElementById("edit-transfer-id").value = transfer.id;
+
+    // Reset visibility
+    document.getElementById("main-transfer-fields").style.display = "block";
+    document.getElementById("split-section").style.display = "none";
+    document.getElementById("split-child-message").style.display = "none";
+    document.getElementById("split-buttons").style.display = "none";
+
+    if (transfer.is_split_parent) {
+      // Show split section with existing splits
+      document.getElementById("main-transfer-fields").style.display = "none";
+      document.getElementById("split-section").style.display = "block";
+      loadExistingSplits(transfer);
+    } else if (transfer.parent_transfer_id) {
+      // Show as split child (individual edit)
+      document.getElementById("split-child-message").style.display = "block";
+      document.getElementById("view-parent-link").dataset.parentId = transfer.parent_transfer_id;
+      populateMainFields(transfer);
+    } else {
+      // Normal transfer - show main fields with split option
+      populateMainFields(transfer);
+      document.getElementById("split-buttons").style.display = "block";
+    }
+  }
+
+  function populateMainFields(transfer) {
+    document.getElementById("edit-transfer-date").value = transfer.date;
+    document.getElementById("edit-transfer-amount").value = transfer.amount;
+    document.getElementById("edit-transfer-from").value = transfer.from_account_id || "";
+    document.getElementById("edit-transfer-to").value = transfer.to_account_id || "";
+    document.getElementById("edit-transfer-withholding").value = transfer.withholding_category_id || "";
+    document.getElementById("edit-transfer-notes").value = transfer.notes || "";
+  }
+
+  function initializeSplitMode(numSplits) {
+    document.getElementById("main-transfer-fields").style.display = "none";
+    document.getElementById("split-section").style.display = "block";
+    document.getElementById("split-mode-input").value = "1";
+
+    const originalAmount = parseFloat(document.getElementById("edit-transfer-amount").value);
+    document.getElementById("original-transfer-amount").value = originalAmount;
+
+    document.getElementById("split-rows-container").innerHTML = "";
+    splitCounter = 0;
+
+    const splitAmount = (originalAmount / numSplits).toFixed(2);
+    for (let i = 0; i < numSplits; i++) {
+      addSplitRow(splitAmount);
+    }
+
+    validateSplitAmounts();
+  }
+
+  function addSplitRow(amount = null) {
+    const template = document.getElementById("split-row-template");
+    const clone = template.content.cloneNode(true);
+
+    const row = clone.querySelector(".split-row");
+    row.dataset.splitIndex = splitCounter;
+
+    clone.querySelector(".split-number").textContent = splitCounter + 1;
+
+    // Update field names
+    clone.querySelectorAll("[name^='split-0-']").forEach(field => {
+      field.name = field.name.replace("split-0-", `split-${splitCounter}-`);
+    });
+
+    if (amount) {
+      clone.querySelector(".split-amount-input").value = amount;
+    }
+
+    // Pre-fill with parent transfer data
+    if (currentTransferData) {
+      clone.querySelector(`[name="split-${splitCounter}-from_account"]`).value =
+        currentTransferData.from_account_id || "";
+      clone.querySelector(`[name="split-${splitCounter}-to_account"]`).value =
+        currentTransferData.to_account_id || "";
+      clone.querySelector(`[name="split-${splitCounter}-withholding_category"]`).value =
+        currentTransferData.withholding_category_id || "";
+    }
+
+    document.getElementById("split-rows-container").appendChild(clone);
+
+    // Attach validation listener
+    const amountInput = document.querySelector(`[name="split-${splitCounter}-amount"]`);
+    if (amountInput) {
+      amountInput.addEventListener("input", validateSplitAmounts);
+    }
+
+    splitCounter++;
+    validateSplitAmounts();
+  }
+
+  function removeSplitRow(button) {
+    const rows = document.querySelectorAll(".split-row");
+    if (rows.length <= 2) {
+      alert("You must have at least 2 splits. Use 'Cancel Split' to revert to a single transfer.");
+      return;
+    }
+
+    button.closest(".split-row").remove();
+    reindexSplitRows();
+    validateSplitAmounts();
+  }
+
+  function reindexSplitRows() {
+    const rows = document.querySelectorAll(".split-row");
+    rows.forEach((row, index) => {
+      row.dataset.splitIndex = index;
+      row.querySelector(".split-number").textContent = index + 1;
+      row.querySelectorAll("[name^='split-']").forEach(field => {
+        const fieldName = field.name.split("-").pop();
+        field.name = `split-${index}-${fieldName}`;
+      });
+    });
+    splitCounter = rows.length;
+  }
+
+  function validateSplitAmounts() {
+    const originalAmount = parseFloat(document.getElementById("original-transfer-amount").value);
+    let splitTotal = 0;
+
+    document.querySelectorAll(".split-amount-input").forEach(input => {
+      splitTotal += parseFloat(input.value) || 0;
+    });
+
+    const tolerance = 0.005;
+    const diff = Math.abs(originalAmount - splitTotal);
+    const isValid = diff <= tolerance;
+
+    const validationDiv = document.getElementById("split-validation");
+    validationDiv.innerHTML = `
+      <strong>Total:</strong> $${splitTotal.toFixed(2)} / $${originalAmount.toFixed(2)}
+      ${isValid ? '<span class="text-success ms-2">✓</span>' : '<span class="text-danger ms-2">✗ Amounts must match</span>'}
+    `;
+    validationDiv.className = isValid ? "alert alert-success" : "alert alert-danger";
+
+    document.getElementById("save-transfer-btn").disabled = !isValid;
+
+    return isValid;
+  }
+
+  function cancelSplitMode() {
+    if (!confirm("Discard split changes?")) return;
+
+    document.getElementById("split-section").style.display = "none";
+    document.getElementById("main-transfer-fields").style.display = "block";
+    document.getElementById("split-rows-container").innerHTML = "";
+    document.getElementById("split-mode-input").value = "0";
+    splitCounter = 0;
+  }
+
+  function loadExistingSplits(transfer) {
+    document.getElementById("split-rows-container").innerHTML = "";
+    splitCounter = 0;
+
+    const originalAmount = transfer.splits.reduce((sum, s) => sum + parseFloat(s.amount), 0);
+    document.getElementById("original-transfer-amount").value = originalAmount;
+    document.getElementById("split-mode-input").value = "1";
+
+    transfer.splits.forEach(split => {
+      addSplitRow(split.amount);
+      const index = splitCounter - 1;
+      document.querySelector(`[name="split-${index}-from_account"]`).value = split.from_account_id || "";
+      document.querySelector(`[name="split-${index}-to_account"]`).value = split.to_account_id || "";
+      document.querySelector(`[name="split-${index}-withholding_category"]`).value = split.withholding_category_id || "";
+      document.querySelector(`[name="split-${index}-notes"]`).value = split.notes || "";
+    });
+
+    validateSplitAmounts();
+  }
+
+  function closeTransferModal() {
+    const modal = document.getElementById("editTransferModal");
+    const backdrop = document.getElementById("modalBackdrop");
+    if (modal) modal.style.display = "none";
+    if (backdrop) backdrop.style.display = "none";
+
+    // Reset modal state
+    document.getElementById("main-transfer-fields").style.display = "block";
+    document.getElementById("split-section").style.display = "none";
+    document.getElementById("split-child-message").style.display = "none";
+    document.getElementById("split-buttons").style.display = "none";
+    document.getElementById("split-rows-container").innerHTML = "";
+    splitCounter = 0;
+    currentTransferData = null;
+  }
+
+  // Global ESC closes all modals
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "Escape") {
+      closeEditModal();
+      closeTransferModal();
+    }
+  });
+
+  // Clicking backdrop also closes everything
+  const backdropEl = document.getElementById("modalBackdrop");
+  if (backdropEl) {
+    backdropEl.addEventListener("click", function () {
+      closeEditModal();
+      closeTransferModal();
+    });
+  }
+
+  // ============================================
+  // TABLE SORTING FUNCTIONALITY
+  // ============================================
+
+  /**
+   * Initialize sorting for a table
+   */
+  function initTableSorting(tableId, columnConfig) {
+    const table = document.getElementById(tableId);
+    if (!table) return;
+
+    const tbody = table.querySelector('tbody');
+    const headers = table.querySelectorAll('th.sortable');
+
+    headers.forEach(header => {
+      header.addEventListener('click', () => {
+        const sortKey = header.getAttribute('data-sort');
+        const currentSort = header.classList.contains('sort-asc') ? 'asc' :
+                           header.classList.contains('sort-desc') ? 'desc' : 'none';
+
+        // Determine new sort direction
+        let newSort;
+        if (currentSort === 'none' || currentSort === 'desc') {
+          newSort = 'asc';
+        } else {
+          newSort = 'desc';
+        }
+
+        // Remove sort classes from all headers
+        headers.forEach(h => h.classList.remove('sort-asc', 'sort-desc'));
+
+        // Add sort class to clicked header
+        header.classList.add(`sort-${newSort}`);
+
+        // Sort the rows
+        sortTable(tbody, sortKey, newSort, columnConfig[sortKey]);
+      });
+    });
+  }
+
+  /**
+   * Sort table rows
+   */
+  function sortTable(tbody, sortKey, direction, extractor) {
+    const rows = Array.from(tbody.querySelectorAll('tr'));
+
+    rows.sort((a, b) => {
+      const aVal = extractor(a);
+      const bVal = extractor(b);
+
+      // Handle null/undefined values
+      if (aVal === null || aVal === undefined) return 1;
+      if (bVal === null || bVal === undefined) return -1;
+
+      // Compare values
+      let comparison = 0;
+      if (typeof aVal === 'number' && typeof bVal === 'number') {
+        comparison = aVal - bVal;
+      } else {
+        comparison = String(aVal).localeCompare(String(bVal), undefined, { numeric: true, sensitivity: 'base' });
+      }
+
+      return direction === 'asc' ? comparison : -comparison;
+    });
+
+    // Re-append rows in sorted order
+    rows.forEach(row => tbody.appendChild(row));
+  }
+
+  /**
+   * Extract text content from a cell, handling nested elements
+   */
+  function getCellText(row, cellIndex) {
+    const cell = row.cells[cellIndex];
+    if (!cell) return '';
+    return cell.textContent.trim();
+  }
+
+  /**
+   * Parse currency string to number
+   */
+  function parseCurrency(text) {
+    const cleaned = text.replace(/[$,+]/g, '');
+    return parseFloat(cleaned) || 0;
+  }
+
+  /**
+   * Parse date string to comparable value
+   */
+  function parseDate(dateStr) {
+    const date = new Date(dateStr);
+    return date.getTime();
+  }
+
+  // Initialize sorting for transactions table
+  document.addEventListener('DOMContentLoaded', function() {
+    initTableSorting('transactions-table', {
+      date: (row) => parseDate(getCellText(row, 0)),
+      type: (row) => getCellText(row, 1),
+      description: (row) => getCellText(row, 2),
+      amount: (row) => parseCurrency(getCellText(row, 3))
+    });
+  });
+</script>
+
 {% endblock %}
