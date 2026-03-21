@@ -212,7 +212,9 @@
             </div>
             <div class="mortgage-stats">
               <div class="mortgage-stat">
-                <div class="mortgage-stat-label">Balance</div>
+                <div class="mortgage-stat-label">
+                  Balance{% if not is_ytd %} <span style="font-weight:400;color:#adb5bd">· as of Dec 31</span>{% endif %}
+                </div>
                 <div class="mortgage-stat-value balance">
                   {% if row.mortgage.current_balance is not None %}
                     ${{ row.mortgage.current_balance|floatformat:0|intcomma }}
@@ -233,7 +235,9 @@
               </div>
               {% if row.estimated_value and row.equity is not None %}
               <div class="mortgage-stat">
-                <div class="mortgage-stat-label">Equity{% if row.ltv_pct %} · LTV {{ row.ltv_pct|floatformat:0 }}%{% endif %}</div>
+                <div class="mortgage-stat-label">
+                  Equity{% if row.ltv_pct %} · LTV {{ row.ltv_pct|floatformat:0 }}%{% endif %}{% if not is_ytd %} <span style="font-weight:400;color:#adb5bd">· est. value current</span>{% endif %}
+                </div>
                 <div class="mortgage-stat-value equity">
                   ${{ row.equity|floatformat:0|intcomma }}
                 </div>

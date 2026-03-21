@@ -982,6 +982,37 @@ class PropertyMortgage(models.Model):
                 + (self.manual_adjustment or Decimal("0.00"))
         )
 
+    def principal_balance_as_of(self, as_of_date):
+        """
+        Estimated outstanding principal as of a specific date.
+        Same logic as current_principal_balance but caps principal payments
+        at as_of_date (inclusive).
+        """
+        base = self.tracking_start_principal or self.original_principal
+        if base is None:
+            return None
+
+        principal_categories = self.principal_categories()
+        if not principal_categories:
+            return base
+
+        qs = Expense.objects.filter(
+            category__in=principal_categories,
+            date__lte=as_of_date,
+        )
+        if self.tracking_start_date:
+            qs = qs.filter(date__gt=self.tracking_start_date)
+
+        principal_paid = qs.aggregate(
+            total=Coalesce(Sum("amount"), Decimal("0.00"))
+        )["total"]
+
+        return (
+            base
+            - principal_paid
+            + (self.manual_adjustment or Decimal("0.00"))
+        )
+
     @property
     def interest_paid_current_year(self) -> Decimal:
         """

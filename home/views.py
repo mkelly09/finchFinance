@@ -1394,22 +1394,37 @@ def rental_properties(request):
 
         active_mortgage = prop.mortgages.filter(is_active=True).order_by("id").first()
         if active_mortgage:
+            balance_as_of = active_mortgage.principal_balance_as_of(range_end)
             mortgage_info = {
                 "name": active_mortgage.name,
                 "lender_name": active_mortgage.lender_name,
-                "current_balance": active_mortgage.current_principal_balance,
+                "current_balance": balance_as_of,
                 "rate": active_mortgage.interest_rate_percent,
                 "term_end": active_mortgage.term_end_date,
             }
         else:
+            balance_as_of = None
             mortgage_info = None
+
+        # Equity/LTV: use balance as-of range_end with current estimated value
+        # (We don't store historical valuations; balance change is still meaningful year-over-year)
+        est_value = prop.estimated_value
+        if est_value is not None and balance_as_of is not None:
+            equity_as_of = est_value - balance_as_of
+            ltv_as_of = (balance_as_of / est_value) * Decimal("100.0") if est_value else None
+        elif est_value is not None and active_mortgage is None:
+            equity_as_of = est_value
+            ltv_as_of = Decimal("0.0")
+        else:
+            equity_as_of = None
+            ltv_as_of = None
 
         rows.append({
             "property": prop,
             "mortgage": mortgage_info,
-            "estimated_value": prop.estimated_value,
-            "equity": prop.equity,
-            "ltv_pct": prop.ltv_pct,
+            "estimated_value": est_value,
+            "equity": equity_as_of,
+            "ltv_pct": ltv_as_of,
             "income_total": income_total,
             "expense_total": expense_total,
             "net_total": net_total,
@@ -1428,6 +1443,7 @@ def rental_properties(request):
         "range_start": range_start,
         "range_end": range_end,
         "period_label": period_label,
+        "is_ytd": is_ytd,
     }
     return render(request, "rental_properties.html", context)
 
