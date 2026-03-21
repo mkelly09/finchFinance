@@ -4,46 +4,13 @@
 {% block content %}
 <style>
   .properties-container {
-    max-width: 1400px;
+    max-width: 1200px;
     margin: 0 auto;
   }
 
-  .page-header {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-    padding: 32px 40px;
-    border-radius: 12px;
-    margin-bottom: 32px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-  }
-
-  .page-header h1 {
-    font-size: 2rem;
-    font-weight: 700;
-    margin-bottom: 8px;
-  }
-
-  .page-header .subtitle {
-    font-size: 1.1rem;
-    opacity: 0.95;
-  }
-
-  .year-selector-card {
-    background: white;
-    padding: 24px;
-    border-radius: 12px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-    margin-bottom: 24px;
-  }
-
-  .year-selector-card .year-buttons {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-  }
-
+  /* Year selector */
   .year-btn {
-    padding: 10px 20px;
+    padding: 8px 18px;
     border: 2px solid #e9ecef;
     background: white;
     color: #495057;
@@ -53,158 +20,141 @@
     transition: all 0.2s ease;
     text-decoration: none;
     display: inline-block;
+    font-size: 0.95rem;
   }
+  .year-btn:hover { border-color: #667eea; color: #667eea; }
+  .year-btn.active { background: #667eea; color: white; border-color: #667eea; }
 
-  .year-btn:hover {
-    border-color: #667eea;
-    color: #667eea;
-    background: #f8f9fa;
-  }
-
-  .year-btn.active {
-    background: #667eea;
-    color: white;
-    border-color: #667eea;
-  }
-
+  /* Property card */
   .property-card {
     background: white;
     border-radius: 12px;
     box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-    margin-bottom: 20px;
+    margin-bottom: 24px;
     overflow: hidden;
-    transition: all 0.3s ease;
-  }
-
-  .property-card:hover {
-    box-shadow: 0 4px 16px rgba(0,0,0,0.12);
-    transform: translateY(-2px);
   }
 
   .property-header {
-    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-    padding: 20px 24px;
-    border-bottom: 2px solid #dee2e6;
+    padding: 18px 24px;
+    border-bottom: 1px solid #e9ecef;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
   }
 
   .property-name {
-    font-size: 1.4rem;
+    font-size: 1.35rem;
     font-weight: 700;
     color: #212529;
-    margin-bottom: 4px;
   }
 
-  .property-value {
-    font-size: 0.95rem;
+  .property-est-value {
+    font-size: 0.9rem;
     color: #6c757d;
   }
 
   .property-body {
-    padding: 24px;
+    padding: 20px 24px 16px;
   }
 
-  .metric-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 24px;
-    margin-bottom: 24px;
-  }
-
-  .metric-box {
-    padding: 16px;
+  /* Mortgage stat boxes */
+  .mortgage-block {
     background: #f8f9fa;
-    border-radius: 8px;
-    border-left: 4px solid #667eea;
+    border-radius: 10px;
+    border: 1px solid #e9ecef;
+    padding: 16px 20px;
+    margin-bottom: 16px;
   }
 
-  .metric-label {
-    font-size: 0.85rem;
+  .mortgage-block-title {
+    font-size: 0.8rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: #6c757d;
+    margin-bottom: 12px;
+  }
+
+  .mortgage-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px;
+  }
+
+  .mortgage-stat {
+    background: white;
+    border-radius: 8px;
+    padding: 12px 14px;
+    border: 1px solid #e9ecef;
+  }
+
+  .mortgage-stat-label {
+    font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.5px;
     color: #6c757d;
-    margin-bottom: 6px;
     font-weight: 600;
+    margin-bottom: 4px;
   }
 
-  .metric-value {
-    font-size: 1.5rem;
+  .mortgage-stat-value {
+    font-size: 1.15rem;
     font-weight: 700;
     color: #212529;
   }
 
-  .metric-box.income {
-    border-left-color: #198754;
-  }
+  .mortgage-stat-value.balance { color: #495057; }
+  .mortgage-stat-value.equity  { color: #198754; }
+  .mortgage-stat-value.rate    { color: #664d03; }
+  .mortgage-stat-value.term    { color: #0d6efd; }
 
-  .metric-box.income .metric-value {
-    color: #198754;
-  }
-
-  .metric-box.expense {
-    border-left-color: #dc3545;
-  }
-
-  .metric-box.expense .metric-value {
-    color: #dc3545;
-  }
-
-  .metric-box.net {
-    border-left-color: #0dcaf0;
-  }
-
-  .metric-box.net .metric-value {
-    color: #0dcaf0;
-  }
-
-  .mortgage-section {
-    background: #fff3cd;
-    border: 1px solid #ffecb5;
-    border-radius: 8px;
-    padding: 16px;
-    margin-bottom: 20px;
-  }
-
-  .mortgage-title {
-    font-size: 1.1rem;
-    font-weight: 600;
-    color: #664d03;
-    margin-bottom: 8px;
-  }
-
-  .mortgage-details {
+  /* Financials row */
+  .financials-row {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 12px;
-    font-size: 0.9rem;
-    color: #664d03;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 16px;
   }
 
-  .equity-section {
-    background: #d1e7dd;
-    border: 1px solid #badbcc;
+  .fin-box {
     border-radius: 8px;
-    padding: 16px;
-    margin-bottom: 20px;
+    padding: 12px 14px;
+    border-left: 4px solid #dee2e6;
+    background: #f8f9fa;
   }
+  .fin-box.income  { border-left-color: #198754; }
+  .fin-box.expense { border-left-color: #dc3545; }
+  .fin-box.net     { border-left-color: #667eea; }
 
-  .equity-title {
-    font-size: 1.1rem;
+  .fin-label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #6c757d;
     font-weight: 600;
-    color: #0f5132;
-    margin-bottom: 8px;
+    margin-bottom: 4px;
   }
-
-  .equity-details {
-    font-size: 0.9rem;
-    color: #0f5132;
+  .fin-value {
+    font-size: 1.05rem;
+    font-weight: 700;
   }
+  .fin-box.income  .fin-value { color: #198754; }
+  .fin-box.expense .fin-value { color: #dc3545; }
+  .fin-box.net     .fin-value { color: #495057; }
 
-  .action-buttons {
+  /* Actions */
+  .property-actions {
     display: flex;
-    gap: 12px;
+    gap: 10px;
     justify-content: flex-end;
+    padding-top: 4px;
+    border-top: 1px solid #f0f0f0;
+    margin-top: 4px;
   }
 
+  /* Empty state */
   .empty-state {
     text-align: center;
     padding: 60px 20px;
@@ -212,27 +162,13 @@
     border-radius: 12px;
     box-shadow: 0 2px 8px rgba(0,0,0,0.08);
   }
-
-  .empty-state-icon {
-    font-size: 4rem;
-    margin-bottom: 16px;
-  }
 </style>
 
 <div class="properties-container mt-4">
-  <div class="page-header">
-    <h1>🏠 Rental Properties</h1>
-    <div class="subtitle">
-      Portfolio overview for <strong>{{ period_label }}</strong>
-      ({{ range_start|date:"M d, Y" }} to {{ range_end|date:"M d, Y" }})
-    </div>
-  </div>
 
-  <div class="year-selector-card">
-    <div class="d-flex justify-content-between align-items-center mb-3">
-      <h5 class="mb-0">📅 Select Period</h5>
-    </div>
-    <div class="year-buttons">
+  <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+    <h2 class="mb-0">🏠 Rental Properties</h2>
+    <div class="d-flex gap-2 flex-wrap">
       {% for year_val, year_label in year_options %}
         <a href="?year={{ year_val }}"
            class="year-btn {% if selected_year == year_val %}active{% endif %}">
@@ -245,123 +181,104 @@
   {% if rows %}
     {% for row in rows %}
       <div class="property-card">
+
         <div class="property-header">
-          <div class="property-name">{{ row.property.name }}</div>
-          <div class="property-value">
+          <div>
+            <div class="property-name">{{ row.property.name }}</div>
             {% if row.property.estimated_value %}
-              Estimated Value: ${{ row.property.estimated_value|floatformat:0|intcomma }}
-              {% if row.property.last_valued_date %}
-                (as of {{ row.property.last_valued_date|date:"M d, Y" }})
-              {% endif %}
-            {% else %}
-              <span class="text-muted">No estimated value set</span>
+              <div class="property-est-value">
+                Est. value: ${{ row.property.estimated_value|floatformat:0|intcomma }}
+                {% if row.property.last_valued_date %}
+                  · as of {{ row.property.last_valued_date|date:"M Y" }}
+                {% endif %}
+              </div>
             {% endif %}
+          </div>
+          <div class="d-flex gap-2">
+            <a href="{% url 'rental_property_detail' row.property.id %}?year={{ selected_year }}"
+               class="btn btn-sm btn-primary">View Details</a>
+            <a href="{% url 'rental_tax_summary' row.property.id %}"
+               class="btn btn-sm btn-outline-secondary">Tax Summary</a>
           </div>
         </div>
 
         <div class="property-body">
-          <div class="row g-3 mb-3">
 
-            <!-- Mortgage (prominent) -->
-            <div class="col-md-7">
-              {% if row.mortgage %}
-                <div class="mortgage-section h-100 mb-0">
-                  <div class="mortgage-title">🏦 {{ row.mortgage.name }}
-                    {% if row.mortgage.lender_name %}
-                      <span style="font-weight:400; font-size:0.9rem;"> — {{ row.mortgage.lender_name }}</span>
-                    {% endif %}
-                  </div>
-                  <div class="mortgage-details">
-                    <div>
-                      <strong>Balance:</strong>
-                      {% if row.mortgage.current_balance is not None %}
-                        ${{ row.mortgage.current_balance|floatformat:2|intcomma }}
-                      {% else %}
-                        <span class="text-muted">—</span>
-                      {% endif %}
-                    </div>
-                    <div>
-                      <strong>Rate:</strong>
-                      {% if row.mortgage.rate %}
-                        {{ row.mortgage.rate|floatformat:3 }}%
-                      {% else %}
-                        <span class="text-muted">—</span>
-                      {% endif %}
-                    </div>
-                    <div>
-                      <strong>Term Ends:</strong>
-                      {% if row.mortgage.term_end %}
-                        {{ row.mortgage.term_end|date:"M d, Y" }}
-                      {% else %}
-                        <span class="text-muted">—</span>
-                      {% endif %}
-                    </div>
-                    {% if row.estimated_value and row.equity is not None %}
-                    <div>
-                      <strong>Equity:</strong> ${{ row.equity|floatformat:0|intcomma }}
-                      {% if row.ltv_pct %}
-                        <span class="ms-1">(LTV {{ row.ltv_pct|floatformat:1 }}%)</span>
-                      {% endif %}
-                    </div>
-                    {% endif %}
-                  </div>
-                </div>
-              {% elif row.estimated_value and row.equity is not None %}
-                <div class="equity-section h-100 mb-0">
-                  <div class="equity-title">💰 Equity</div>
-                  <div class="equity-details">
-                    <div><strong>Equity:</strong> ${{ row.equity|floatformat:2|intcomma }}</div>
-                    {% if row.ltv_pct %}<div><strong>LTV:</strong> {{ row.ltv_pct|floatformat:1 }}%</div>{% endif %}
-                  </div>
-                </div>
-              {% endif %}
+          <!-- Mortgage -->
+          {% if row.mortgage %}
+          <div class="mortgage-block">
+            <div class="mortgage-block-title">
+              🏦 {{ row.mortgage.name }}{% if row.mortgage.lender_name %} &mdash; {{ row.mortgage.lender_name }}{% endif %}
             </div>
-
-            <!-- Income / Expenses / Net (compact) -->
-            <div class="col-md-5">
-              <div class="d-flex flex-column gap-2 h-100 justify-content-center">
-                <div class="metric-box income py-2">
-                  <div class="metric-label">💵 Rental Income</div>
-                  <div class="metric-value" style="font-size:1.2rem;">${{ row.income_total|floatformat:2|intcomma }}</div>
-                </div>
-                <div class="metric-box expense py-2">
-                  <div class="metric-label">💸 Rental Expenses</div>
-                  <div class="metric-value" style="font-size:1.2rem;">${{ row.expense_total|floatformat:2|intcomma }}</div>
-                </div>
-                <div class="metric-box net py-2">
-                  <div class="metric-label">📊 Net Profit</div>
-                  <div class="metric-value" style="font-size:1.2rem;">${{ row.net_total|floatformat:2|intcomma }}</div>
+            <div class="mortgage-stats">
+              <div class="mortgage-stat">
+                <div class="mortgage-stat-label">Balance</div>
+                <div class="mortgage-stat-value balance">
+                  {% if row.mortgage.current_balance is not None %}
+                    ${{ row.mortgage.current_balance|floatformat:0|intcomma }}
+                  {% else %}—{% endif %}
                 </div>
               </div>
+              <div class="mortgage-stat">
+                <div class="mortgage-stat-label">Rate</div>
+                <div class="mortgage-stat-value rate">
+                  {% if row.mortgage.rate %}{{ row.mortgage.rate|floatformat:2 }}%{% else %}—{% endif %}
+                </div>
+              </div>
+              <div class="mortgage-stat">
+                <div class="mortgage-stat-label">Term Ends</div>
+                <div class="mortgage-stat-value term">
+                  {% if row.mortgage.term_end %}{{ row.mortgage.term_end|date:"M Y" }}{% else %}—{% endif %}
+                </div>
+              </div>
+              {% if row.estimated_value and row.equity is not None %}
+              <div class="mortgage-stat">
+                <div class="mortgage-stat-label">Equity{% if row.ltv_pct %} · LTV {{ row.ltv_pct|floatformat:0 }}%{% endif %}</div>
+                <div class="mortgage-stat-value equity">
+                  ${{ row.equity|floatformat:0|intcomma }}
+                </div>
+              </div>
+              {% endif %}
             </div>
+          </div>
+          {% elif row.estimated_value and row.equity is not None %}
+          <div class="mortgage-block">
+            <div class="mortgage-stats">
+              <div class="mortgage-stat">
+                <div class="mortgage-stat-label">Equity{% if row.ltv_pct %} · LTV {{ row.ltv_pct|floatformat:0 }}%{% endif %}</div>
+                <div class="mortgage-stat-value equity">${{ row.equity|floatformat:0|intcomma }}</div>
+              </div>
+            </div>
+          </div>
+          {% endif %}
 
+          <!-- Rental financials -->
+          <div class="financials-row">
+            <div class="fin-box income">
+              <div class="fin-label">Rental Income</div>
+              <div class="fin-value">${{ row.income_total|floatformat:0|intcomma }}</div>
+            </div>
+            <div class="fin-box expense">
+              <div class="fin-label">Rental Expenses</div>
+              <div class="fin-value">${{ row.expense_total|floatformat:0|intcomma }}</div>
+            </div>
+            <div class="fin-box net">
+              <div class="fin-label">Net Profit</div>
+              <div class="fin-value">${{ row.net_total|floatformat:0|intcomma }}</div>
+            </div>
           </div>
 
-          <div class="action-buttons">
-            <a href="{% url 'rental_property_detail' row.property.id %}?year={{ selected_year }}"
-               class="btn btn-primary">
-              📋 View Details
-            </a>
-            <a href="{% url 'rental_tax_summary' row.property.id %}"
-               class="btn btn-outline-secondary">
-              📄 Tax Summary
-            </a>
-          </div>
         </div>
       </div>
     {% endfor %}
+
   {% else %}
     <div class="empty-state">
-      <div class="empty-state-icon">🏘️</div>
-      <h3>No Properties Found</h3>
+      <div style="font-size:3rem; margin-bottom:12px;">🏘️</div>
+      <h4>No Properties Found</h4>
       <p class="text-muted">You haven't added any rental properties yet.</p>
     </div>
   {% endif %}
 
-  <div class="mt-4">
-    <a class="btn btn-outline-secondary" href="{% url 'dashboard' %}">
-      ← Back to Dashboard
-    </a>
-  </div>
 </div>
 {% endblock %}

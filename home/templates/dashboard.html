@@ -546,7 +546,7 @@
       </ul>
     </div>
     <div class="card-body">
-      <form method="post" novalidate>
+      <form method="post" enctype="multipart/form-data" novalidate>
         {% csrf_token %}
         <input type="hidden" name="entry_type" id="id_entry_type" value="{{ form.entry_type.value|default:"expense" }}">
 
@@ -665,6 +665,15 @@
                 Funded from withholding bucket
               </label>
             </div>
+          </div>
+        </div>
+
+        <!-- Receipt upload (expenses only) -->
+        <div class="row mb-3 expense-field">
+          <div class="col-12">
+            <label class="form-label">Receipt (optional)</label>
+            <input type="file" name="receipt" class="form-control"
+                   accept="image/*,.pdf" capture="environment">
           </div>
         </div>
 

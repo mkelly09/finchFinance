@@ -441,7 +441,7 @@ def dashboard(request):
         # New transaction (Add Transaction form)
         # -------------------------
         else:
-            form = TransactionForm(request.POST)
+            form = TransactionForm(request.POST, request.FILES)
             if form.is_valid():
                 entry_type = form.cleaned_data["entry_type"]
                 entry_date = form.cleaned_data["date"]
@@ -470,7 +470,18 @@ def dashboard(request):
                         expense.withholding_category = None
 
                     expense.save()
-                    messages.success(request, "Expense saved successfully!")
+
+                    # Attach receipt if uploaded
+                    receipt_file = request.FILES.get("receipt")
+                    if receipt_file:
+                        ExpenseAttachment.objects.create(
+                            expense=expense,
+                            file=receipt_file,
+                            original_name=receipt_file.name,
+                        )
+                        messages.success(request, "Expense saved with receipt!")
+                    else:
+                        messages.success(request, "Expense saved successfully!")
 
                 elif entry_type == "income":
                     income = Income(
