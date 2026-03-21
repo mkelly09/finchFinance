@@ -134,3 +134,12 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 LOGIN_URL = '/accounts/login/'
 LOGIN_REDIRECT_URL = '/'
 LOGOUT_REDIRECT_URL = '/accounts/login/'
+
+# WebAuthn / Passkey settings
+WEBAUTHN_RP_ID = config('WEBAUTHN_RP_ID', default='localhost')
+WEBAUTHN_RP_NAME = 'Finch Finance'
+WEBAUTHN_ORIGIN = config('WEBAUTHN_ORIGIN', default='http://localhost:8000')
+
+# Session / auto-logout: expire after 30 days of inactivity
+SESSION_COOKIE_AGE = 60 * 60 * 24 * 30  # 30 days in seconds
+SESSION_SAVE_EVERY_REQUEST = True  # reset the timer on each request

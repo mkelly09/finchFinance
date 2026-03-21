@@ -18,6 +18,8 @@ from .models import (
     MonthEndExpenseCategorySnapshot,
     MonthEndWithholdingCategorySnapshot,
     MonthEndIncomeCategorySnapshot,
+    UserProfile,
+    WebAuthnCredential,
 )
 
 
@@ -466,3 +468,18 @@ class MonthEndIncomeCategorySnapshotAdmin(admin.ModelAdmin):
     list_filter = ("month_close",)
     ordering = ("-month_close__month", "income_category__name")
     readonly_fields = ("month_close", "income_category", "monthly_target", "actual_received")
+
+
+# ---------- USER PROFILES ----------
+
+@admin.register(UserProfile)
+class UserProfileAdmin(admin.ModelAdmin):
+    list_display = ("user",)
+    filter_horizontal = ("pinned_categories",)
+
+
+@admin.register(WebAuthnCredential)
+class WebAuthnCredentialAdmin(admin.ModelAdmin):
+    list_display = ("user", "device_name", "created_at")
+    list_filter = ("user",)
+    ordering = ("-created_at",)

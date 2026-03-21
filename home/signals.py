@@ -13,7 +13,14 @@ from django.utils import timezone
 from decimal import Decimal
 from datetime import date as dt_date
 
-from .models import Income, Expense, Transfer, BalanceAdjustment, BankAccount
+from django.contrib.auth.models import User
+from .models import Income, Expense, Transfer, BalanceAdjustment, BankAccount, UserProfile
+
+
+@receiver(post_save, sender=User)
+def create_user_profile(sender, instance, created, **kwargs):
+    if created:
+        UserProfile.objects.get_or_create(user=instance)
 
 
 def should_update_balance(account, transaction_date):

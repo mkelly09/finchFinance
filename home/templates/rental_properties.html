@@ -260,68 +260,82 @@
         </div>
 
         <div class="property-body">
-          <div class="metric-grid">
-            <div class="metric-box income">
-              <div class="metric-label">💵 Total Income</div>
-              <div class="metric-value">${{ row.income_total|floatformat:2|intcomma }}</div>
+          <div class="row g-3 mb-3">
+
+            <!-- Mortgage (prominent) -->
+            <div class="col-md-7">
+              {% if row.mortgage %}
+                <div class="mortgage-section h-100 mb-0">
+                  <div class="mortgage-title">🏦 {{ row.mortgage.name }}
+                    {% if row.mortgage.lender_name %}
+                      <span style="font-weight:400; font-size:0.9rem;"> — {{ row.mortgage.lender_name }}</span>
+                    {% endif %}
+                  </div>
+                  <div class="mortgage-details">
+                    <div>
+                      <strong>Balance:</strong>
+                      {% if row.mortgage.current_balance is not None %}
+                        ${{ row.mortgage.current_balance|floatformat:2|intcomma }}
+                      {% else %}
+                        <span class="text-muted">—</span>
+                      {% endif %}
+                    </div>
+                    <div>
+                      <strong>Rate:</strong>
+                      {% if row.mortgage.rate %}
+                        {{ row.mortgage.rate|floatformat:3 }}%
+                      {% else %}
+                        <span class="text-muted">—</span>
+                      {% endif %}
+                    </div>
+                    <div>
+                      <strong>Term Ends:</strong>
+                      {% if row.mortgage.term_end %}
+                        {{ row.mortgage.term_end|date:"M d, Y" }}
+                      {% else %}
+                        <span class="text-muted">—</span>
+                      {% endif %}
+                    </div>
+                    {% if row.estimated_value and row.equity is not None %}
+                    <div>
+                      <strong>Equity:</strong> ${{ row.equity|floatformat:0|intcomma }}
+                      {% if row.ltv_pct %}
+                        <span class="ms-1">(LTV {{ row.ltv_pct|floatformat:1 }}%)</span>
+                      {% endif %}
+                    </div>
+                    {% endif %}
+                  </div>
+                </div>
+              {% elif row.estimated_value and row.equity is not None %}
+                <div class="equity-section h-100 mb-0">
+                  <div class="equity-title">💰 Equity</div>
+                  <div class="equity-details">
+                    <div><strong>Equity:</strong> ${{ row.equity|floatformat:2|intcomma }}</div>
+                    {% if row.ltv_pct %}<div><strong>LTV:</strong> {{ row.ltv_pct|floatformat:1 }}%</div>{% endif %}
+                  </div>
+                </div>
+              {% endif %}
             </div>
-            <div class="metric-box expense">
-              <div class="metric-label">💸 Total Expenses</div>
-              <div class="metric-value">${{ row.expense_total|floatformat:2|intcomma }}</div>
+
+            <!-- Income / Expenses / Net (compact) -->
+            <div class="col-md-5">
+              <div class="d-flex flex-column gap-2 h-100 justify-content-center">
+                <div class="metric-box income py-2">
+                  <div class="metric-label">💵 Rental Income</div>
+                  <div class="metric-value" style="font-size:1.2rem;">${{ row.income_total|floatformat:2|intcomma }}</div>
+                </div>
+                <div class="metric-box expense py-2">
+                  <div class="metric-label">💸 Rental Expenses</div>
+                  <div class="metric-value" style="font-size:1.2rem;">${{ row.expense_total|floatformat:2|intcomma }}</div>
+                </div>
+                <div class="metric-box net py-2">
+                  <div class="metric-label">📊 Net Profit</div>
+                  <div class="metric-value" style="font-size:1.2rem;">${{ row.net_total|floatformat:2|intcomma }}</div>
+                </div>
+              </div>
             </div>
-            <div class="metric-box net">
-              <div class="metric-label">📊 Net Profit</div>
-              <div class="metric-value">${{ row.net_total|floatformat:2|intcomma }}</div>
-            </div>
+
           </div>
-
-          {% if row.mortgage %}
-            <div class="mortgage-section">
-              <div class="mortgage-title">🏦 Mortgage: {{ row.mortgage.name }}</div>
-              <div class="mortgage-details">
-                <div>
-                  <strong>Lender:</strong> {{ row.mortgage.lender_name|default:"—" }}
-                </div>
-                <div>
-                  <strong>Balance:</strong>
-                  {% if row.mortgage.current_balance is not None %}
-                    ${{ row.mortgage.current_balance|floatformat:2|intcomma }}
-                  {% else %}
-                    <span class="text-muted">Not set</span>
-                  {% endif %}
-                </div>
-                <div>
-                  <strong>Rate:</strong>
-                  {% if row.mortgage.rate %}
-                    {{ row.mortgage.rate|floatformat:3 }}%
-                  {% else %}
-                    <span class="text-muted">Not set</span>
-                  {% endif %}
-                </div>
-                <div>
-                  <strong>Term Ends:</strong>
-                  {% if row.mortgage.term_end %}
-                    {{ row.mortgage.term_end|date:"M d, Y" }}
-                  {% else %}
-                    <span class="text-muted">Not set</span>
-                  {% endif %}
-                </div>
-              </div>
-            </div>
-          {% endif %}
-
-          {% if row.estimated_value and row.equity is not None %}
-            <div class="equity-section">
-              <div class="equity-title">💰 Equity Information</div>
-              <div class="equity-details">
-                <div><strong>Equity:</strong> ${{ row.equity|floatformat:2|intcomma }}</div>
-                <div><strong>Property Value:</strong> ${{ row.estimated_value|floatformat:0|intcomma }}</div>
-                {% if row.ltv_pct %}
-                  <div><strong>Loan-to-Value (LTV):</strong> {{ row.ltv_pct|floatformat:1 }}%</div>
-                {% endif %}
-              </div>
-            </div>
-          {% endif %}
 
           <div class="action-buttons">
             <a href="{% url 'rental_property_detail' row.property.id %}?year={{ selected_year }}"

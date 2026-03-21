@@ -1,0 +1,166 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container mt-4">
+  <div class="row justify-content-center">
+    <div class="col-md-6 col-lg-5">
+
+      <h2 class="mb-4">👤 My Profile</h2>
+
+      {% if messages %}
+        {% for message in messages %}
+          <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
+            {{ message }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+          </div>
+        {% endfor %}
+      {% endif %}
+
+      <!-- Profile Info -->
+      <div class="card mb-4">
+        <div class="card-header fw-semibold">Account Details</div>
+        <div class="card-body">
+          <form method="post">
+            {% csrf_token %}
+            <div class="mb-3">
+              <label class="form-label">Username</label>
+              <input type="text" class="form-control" value="{{ user.username }}" disabled>
+            </div>
+            <div class="row g-3 mb-3">
+              <div class="col">
+                <label class="form-label">First Name</label>
+                <input type="text" class="form-control" name="first_name" value="{{ user.first_name }}">
+              </div>
+              <div class="col">
+                <label class="form-label">Last Name</label>
+                <input type="text" class="form-control" name="last_name" value="{{ user.last_name }}">
+              </div>
+            </div>
+            <div class="mb-4">
+              <label class="form-label">Email</label>
+              <input type="email" class="form-control" name="email" value="{{ user.email }}">
+            </div>
+            <button type="submit" class="btn btn-primary w-100">Save Changes</button>
+          </form>
+        </div>
+      </div>
+
+      <!-- Password -->
+      <div class="card mb-4">
+        <div class="card-header fw-semibold">Password</div>
+        <div class="card-body">
+          <p class="text-muted small mb-3">Change your password using the link below.</p>
+          <a href="{% url 'password_change' %}" class="btn btn-outline-secondary w-100">Change Password</a>
+        </div>
+      </div>
+
+      <!-- Passkeys -->
+      <div class="card">
+        <div class="card-header fw-semibold">Face ID / Passkeys</div>
+        <div class="card-body">
+          <p class="text-muted small mb-3">
+            Register this device to sign in with Face ID, Touch ID, or your device PIN — no password needed.
+          </p>
+
+          {% if credentials %}
+          <ul class="list-group mb-3">
+            {% for cred in credentials %}
+            <li class="list-group-item d-flex justify-content-between align-items-center">
+              <span>🔑 {{ cred.device_name }} <small class="text-muted">— {{ cred.created_at|date:"M d, Y" }}</small></span>
+              <form method="post" action="{% url 'webauthn_delete' %}" style="margin:0;">
+                {% csrf_token %}
+                <input type="hidden" name="credential_id" value="{{ cred.pk }}">
+                <button type="submit" class="btn btn-sm btn-outline-danger"
+                        onclick="return confirm('Remove this passkey?');">Remove</button>
+              </form>
+            </li>
+            {% endfor %}
+          </ul>
+          {% endif %}
+
+          <div id="passkey-status" class="alert d-none mb-3"></div>
+
+          <div class="mb-3">
+            <label class="form-label small text-muted">Device nickname (optional)</label>
+            <input type="text" id="device-name" class="form-control form-control-sm"
+                   placeholder="e.g. iPhone, MacBook">
+          </div>
+          <button id="register-passkey-btn" class="btn btn-primary w-100">
+            Add Passkey for This Device
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+document.getElementById('register-passkey-btn').addEventListener('click', async () => {
+  const statusEl = document.getElementById('passkey-status');
+  const deviceName = document.getElementById('device-name').value.trim() || 'Passkey';
+
+  function showStatus(msg, type) {
+    statusEl.textContent = msg;
+    statusEl.className = `alert alert-${type}`;
+  }
+
+  try {
+    showStatus('Starting registration…', 'info');
+
+    // Step 1: get options from server
+    const beginRes = await fetch("{% url 'webauthn_register_begin' %}", {
+      method: 'POST',
+      headers: {'X-CSRFToken': '{{ csrf_token }}'},
+    });
+    const options = await beginRes.json();
+
+    // Convert base64url strings to ArrayBuffers
+    options.challenge = _b64ToBuffer(options.challenge);
+    options.user.id = _b64ToBuffer(options.user.id);
+    if (options.excludeCredentials) {
+      options.excludeCredentials = options.excludeCredentials.map(c => ({
+        ...c, id: _b64ToBuffer(c.id)
+      }));
+    }
+
+    // Step 2: trigger browser biometric prompt
+    const credential = await navigator.credentials.create({ publicKey: options });
+
+    // Step 3: send result to server
+    const completeRes = await fetch("{% url 'webauthn_register_complete' %}", {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-CSRFToken': '{{ csrf_token }}'},
+      body: JSON.stringify({
+        id: credential.id,
+        rawId: _bufferToB64(credential.rawId),
+        type: credential.type,
+        deviceName: deviceName,
+        response: {
+          clientDataJSON: _bufferToB64(credential.response.clientDataJSON),
+          attestationObject: _bufferToB64(credential.response.attestationObject),
+        },
+      }),
+    });
+    const result = await completeRes.json();
+    if (result.ok) {
+      showStatus('Passkey registered! You can now sign in with Face ID on this device.', 'success');
+      setTimeout(() => location.reload(), 1500);
+    } else {
+      showStatus('Registration failed: ' + result.error, 'danger');
+    }
+  } catch (err) {
+    showStatus('Error: ' + err.message, 'danger');
+  }
+});
+
+function _b64ToBuffer(b64) {
+  const bin = atob(b64.replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from(bin, c => c.charCodeAt(0)).buffer;
+}
+function _bufferToB64(buf) {
+  return btoa(String.fromCharCode(...new Uint8Array(buf)))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+}
+</script>
+{% endblock %}

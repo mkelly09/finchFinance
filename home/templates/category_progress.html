@@ -145,6 +145,13 @@
     </div>
   </div>
 
+  {% if pinned_only %}
+  <div class="alert alert-info d-flex justify-content-between align-items-center py-2 mb-3">
+    <span>📌 Showing your pinned categories</span>
+    <a href="?month={{ selected_month }}&show_all=1" class="btn btn-sm btn-outline-secondary">Show all</a>
+  </div>
+  {% endif %}
+
   <div class="row align-items-end mb-3">
     <div class="col-lg-8">
       <h2>Category Progress — {{ selected_month_display }}</h2>

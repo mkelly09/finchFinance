@@ -14,37 +14,34 @@
   <h1 class="finch-page-header">🏠 {{ property.name }}</h1>
   <p class="finch-page-subtitle">Complete financial snapshot for this owned property</p>
 
-  <!-- Summary Cards -->
+  <!-- Summary Row -->
   <div class="row g-3 mb-4">
-    <div class="col-md-3">
-      <div class="finch-summary-card border-start-green">
-        <div class="finch-summary-icon">💰</div>
-        <div class="finch-summary-label">Total Income</div>
-        <div class="finch-summary-value amount-income">
-          ${{ range_income_total|floatformat:2|intcomma }}
+    <div class="col-md-8">
+      <div class="finch-summary-card h-100">
+        <div class="row text-center g-0">
+          <div class="col-4 border-end">
+            <div class="finch-summary-label">Rental Income</div>
+            <div class="finch-summary-value amount-income" style="font-size:1.3rem;">
+              ${{ range_income_total|floatformat:2|intcomma }}
+            </div>
+          </div>
+          <div class="col-4 border-end">
+            <div class="finch-summary-label">Rental Expenses</div>
+            <div class="finch-summary-value amount-expense" style="font-size:1.3rem;">
+              ${{ range_expense_total|floatformat:2|intcomma }}
+            </div>
+          </div>
+          <div class="col-4">
+            <div class="finch-summary-label">Net Profit</div>
+            <div class="finch-summary-value amount-net" style="font-size:1.3rem;">
+              ${{ range_net_total|floatformat:2|intcomma }}
+            </div>
+          </div>
         </div>
       </div>
     </div>
-    <div class="col-md-3">
-      <div class="finch-summary-card border-start-red">
-        <div class="finch-summary-icon">💸</div>
-        <div class="finch-summary-label">Total Expenses</div>
-        <div class="finch-summary-value amount-expense">
-          ${{ range_expense_total|floatformat:2|intcomma }}
-        </div>
-      </div>
-    </div>
-    <div class="col-md-3">
-      <div class="finch-summary-card border-start-purple">
-        <div class="finch-summary-icon">📊</div>
-        <div class="finch-summary-label">Net Amount</div>
-        <div class="finch-summary-value amount-net">
-          ${{ range_net_total|floatformat:2|intcomma }}
-        </div>
-      </div>
-    </div>
-    <div class="col-md-3">
-      <div class="finch-summary-card">
+    <div class="col-md-4">
+      <div class="finch-summary-card h-100">
         <div class="finch-summary-icon">🏦</div>
         <div class="finch-summary-label">Equity (Est.)</div>
         <div class="finch-summary-value amount-net">
@@ -507,8 +504,8 @@
         data: {
           labels: labelsCF,
           datasets: [
-            { label: "Income", data: income, tension: 0, pointRadius: 3 },
-            { label: "Expenses", data: expenses, tension: 0, pointRadius: 3 },
+            { label: "Rental Income", data: income, tension: 0, pointRadius: 3 },
+            { label: "Rental Expenses", data: expenses, tension: 0, pointRadius: 3 },
             { label: "Net", data: net, tension: 0, pointRadius: 3 },
           ]
         },
@@ -707,9 +704,9 @@
         <div class="d-flex justify-content-between align-items-end">
           <h5 class="mb-0">{{ row.month|date:"F Y" }}</h5>
           <div class="text-muted">
-            Income: <strong>${{ row.income_total|floatformat:2|intcomma }}</strong>
+            Rental Income: <strong>${{ row.income_total|floatformat:2|intcomma }}</strong>
             &nbsp;•&nbsp;
-            Expenses: <strong>${{ row.expense_total|floatformat:2|intcomma }}</strong>
+            Rental Expenses: <strong>${{ row.expense_total|floatformat:2|intcomma }}</strong>
             &nbsp;•&nbsp;
             Net: <strong>${{ row.net_total|floatformat:2|intcomma }}</strong>
           </div>
@@ -717,7 +714,7 @@
 
         <hr>
 
-        <h6 class="mb-2">Income</h6>
+        <h6 class="mb-2">Rental Income</h6>
         {% if row.incomes %}
           <div class="table-responsive mb-3">
             <table class="table finch-table table-sm align-middle mb-0">
@@ -755,7 +752,7 @@
           <p class="text-muted">No rental income transactions found for this month.</p>
         {% endif %}
 
-        <h6 class="mb-2">Expenses</h6>
+        <h6 class="mb-2">Rental Expenses</h6>
         {% if row.expenses %}
           <div class="table-responsive">
             <table class="table finch-table table-sm align-middle mb-0">

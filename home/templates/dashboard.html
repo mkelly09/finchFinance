@@ -503,7 +503,7 @@
 <div id="toast-container"></div>
 
 <div class="dashboard-container container mt-4">
-  <h1 class="mb-4">📊 Dashboard</h1>
+  <h1 class="mb-4">📋 Activity</h1>
 
   <!-- Month Selector with Navigation -->
   <div class="month-selector-card">
@@ -529,55 +529,6 @@
     </div>
   </div>
 
-  <!-- Summary Cards -->
-  <div class="summary-cards">
-    <div class="summary-card income">
-      <div class="summary-card-icon">💵</div>
-      <div class="summary-card-label">Total Income</div>
-      <div class="summary-card-value">${{ total_income|floatformat:2|intcomma }}</div>
-      <div class="summary-card-subtitle">Money received</div>
-    </div>
-
-    <div class="summary-card expense">
-      <div class="summary-card-icon">💸</div>
-      <div class="summary-card-label">Total Expenses</div>
-      <div class="summary-card-value">${{ total_expenses|floatformat:2|intcomma }}</div>
-      <div class="summary-card-subtitle">Money spent</div>
-    </div>
-
-    <div class="summary-card transfer">
-      <div class="summary-card-icon">🔄</div>
-      <div class="summary-card-label">Transfers</div>
-      <div class="summary-card-value">${{ total_transfers|default:0|floatformat:2|intcomma }}</div>
-      <div class="summary-card-subtitle">Account reallocations</div>
-    </div>
-
-    <div class="summary-card net">
-      <div class="summary-card-icon">📊</div>
-      <div class="summary-card-label">Net Change</div>
-      <div class="summary-card-value">${{ net_savings|floatformat:2|intcomma }}</div>
-      <div class="summary-card-subtitle">Income minus expenses</div>
-    </div>
-  </div>
-
-  <!-- Quick Actions -->
-  <div class="quick-actions">
-    <h5>⚡ Quick Links</h5>
-    <div class="quick-actions-grid">
-      <a href="{% url 'category_progress' %}?month={{ selected_month }}" class="quick-action-btn">
-        📈 Category Progress
-      </a>
-      <a href="{% url 'withholding_overview' %}?month={{ selected_month }}" class="quick-action-btn">
-        🏦 Withholding Buckets
-      </a>
-      <a href="{% url 'rental_properties' %}" class="quick-action-btn">
-        🏠 Rental Properties
-      </a>
-      <a href="{% url 'bank_accounts' %}" class="quick-action-btn">
-        💳 Bank Accounts
-      </a>
-    </div>
-  </div>
 
   <!-- Add Transaction Card -->
   <div class="card" id="add-transaction-card">
@@ -1043,37 +994,8 @@
     </div>
   </div>
 
-  <!-- Category Progress Chart -->
-  <div class="category-progress-section">
-    <h3>Category Progress</h3>
-    <div class="row">
-      <div class="col-md-8">
-        <canvas id="categoryProgressChart" height="200"></canvas>
-      </div>
-      <div class="col-md-4">
-        {% if category_summaries %}
-          <ul class="list-group">
-            {% for cs in category_summaries %}
-              <li class="list-group-item d-flex justify-content-between align-items-center">
-                <span>{{ cs.name }}</span>
-                <span>
-                  ${{ cs.spent|floatformat:2|intcomma }}
-                  {% if cs.target %}
-                    / ${{ cs.target|floatformat:2|intcomma }}
-                  {% endif %}
-                </span>
-              </li>
-            {% endfor %}
-          </ul>
-        {% else %}
-          <p class="text-muted">No category spending yet this month.</p>
-        {% endif %}
-      </div>
-    </div>
-  </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
   // Section toggle functionality
   function toggleSection(sectionName) {
@@ -1088,71 +1010,6 @@
       toggle.classList.add('collapsed');
     }
   }
-
-  // Category Progress Chart
-  document.addEventListener("DOMContentLoaded", function () {
-    const ctx = document.getElementById('categoryProgressChart');
-    if (!ctx) return;
-
-    const labels = [
-      {% for cs in category_summaries %}
-        "{{ cs.name }}"{% if not forloop.last %},{% endif %}
-      {% endfor %}
-    ];
-    const actual = [
-      {% for cs in category_summaries %}
-        {{ cs.spent|floatformat:2 }}{% if not forloop.last %},{% endif %}
-      {% endfor %}
-    ];
-    const targets = [
-      {% for cs in category_summaries %}
-        {% if cs.target %}
-          {{ cs.target|floatformat:2 }}
-        {% else %}
-          0
-        {% endif %}{% if not forloop.last %},{% endif %}
-      {% endfor %}
-    ];
-
-    const data = {
-      labels: labels,
-      datasets: [
-        {
-          label: 'Actual Spend',
-          data: actual,
-          backgroundColor: 'rgba(54, 162, 235, 0.6)',
-          borderWidth: 1
-        },
-        {
-          label: 'Target Spend',
-          data: targets,
-          type: 'line',
-          borderColor: 'rgba(255, 99, 132, 1)',
-          borderWidth: 2,
-          fill: false,
-          tension: 0.2
-        }
-      ]
-    };
-
-    const config = {
-      type: 'bar',
-      data: data,
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: { position: 'top' },
-          title: { display: false }
-        },
-        scales: {
-          y: { beginAtZero: true, title: { display: true, text: 'Amount ($)' } }
-        }
-      }
-    };
-
-    new Chart(ctx, config);
-  });
 </script>
 
 <!-- Backdrop -->

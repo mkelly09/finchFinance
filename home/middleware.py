@@ -8,6 +8,8 @@ EXEMPT_URLS = [
     '/accounts/password_reset/',
     '/accounts/password_reset/done/',
     '/accounts/reset/',
+    '/webauthn/auth/begin/',
+    '/webauthn/auth/complete/',
 ]
 
 

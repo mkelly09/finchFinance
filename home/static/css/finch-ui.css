@@ -1,0 +1,652 @@
+/*
+ * Finch Finance UI Design System
+ * Modern, consistent styling for the entire application
+ */
+
+/* ============================================
+   NAVBAR - Modern Dark with Gradient
+   ============================================ */
+
+.finch-navbar {
+    background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%) !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2) !important;
+    border-bottom: 2px solid rgba(102, 126, 234, 0.3) !important;
+    min-height: 60px !important;
+}
+
+.finch-navbar .navbar-brand {
+    font-weight: 700 !important;
+    font-size: 1.4rem !important;
+    color: #ffffff !important;
+    padding: 0.5rem 1rem !important;
+}
+
+.finch-navbar .navbar-brand:hover {
+    color: #667eea !important;
+}
+
+.finch-navbar .nav-link {
+    color: #ffffff !important;
+    padding: 0.7rem 1.2rem !important;
+    margin: 0 0.1rem !important;
+    border-radius: 8px !important;
+    transition: all 0.2s ease !important;
+    font-weight: 500 !important;
+    font-size: 1rem !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 0.5rem !important;
+}
+
+.finch-navbar .nav-link .nav-icon {
+    font-size: 1.2rem !important;
+    display: inline-block !important;
+}
+
+.finch-navbar .nav-link:hover {
+    color: #ffffff !important;
+    background: rgba(102, 126, 234, 0.3) !important;
+}
+
+.finch-navbar .nav-link.active {
+    color: #ffffff !important;
+    background: rgba(102, 126, 234, 0.4) !important;
+    border-bottom: 3px solid #667eea !important;
+}
+
+/* User Menu Dropdown */
+.finch-navbar .dropdown-toggle {
+    color: #ffffff !important;
+}
+
+.finch-navbar .dropdown-menu {
+    background: #2c3e50 !important;
+    border: 1px solid rgba(102, 126, 234, 0.3) !important;
+    border-radius: 8px !important;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3) !important;
+    margin-top: 0.5rem !important;
+}
+
+.finch-navbar .dropdown-item {
+    color: #ffffff !important;
+    padding: 0.7rem 1.2rem !important;
+    transition: all 0.2s ease !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 0.5rem !important;
+}
+
+.finch-navbar .dropdown-item:hover {
+    background: rgba(102, 126, 234, 0.3) !important;
+    color: #ffffff !important;
+}
+
+.finch-navbar .dropdown-divider {
+    border-color: rgba(102, 126, 234, 0.3) !important;
+}
+
+/* Logout button styling in dropdown */
+.finch-navbar .dropdown-item[type="submit"] {
+    border: none !important;
+    background: none !important;
+    width: 100% !important;
+    text-align: left !important;
+    cursor: pointer !important;
+    font-family: inherit !important;
+    font-size: inherit !important;
+}
+
+/* Mobile responsiveness */
+@media (max-width: 991px) {
+    .finch-navbar .nav-link {
+        margin: 0.2rem 0 !important;
+    }
+}
+
+/* ============================================
+   CORE LAYOUT
+   ============================================ */
+
+.finch-container {
+    max-width: 1600px;
+    margin: 0 auto;
+}
+
+/* ============================================
+   CARDS
+   ============================================ */
+
+.finch-card {
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    padding: 24px;
+    margin-bottom: 24px;
+    transition: all 0.3s ease;
+}
+
+.finch-card:hover {
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+}
+
+/* ============================================
+   GRADIENT HEADERS
+   ============================================ */
+
+.finch-card-header {
+    padding: 20px 24px;
+    border-radius: 12px 12px 0 0;
+    margin: -24px -24px 24px -24px;
+}
+
+.finch-card-header.gradient-purple {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+}
+
+.finch-card-header.gradient-green {
+    background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+    color: white;
+}
+
+.finch-card-header.gradient-red {
+    background: linear-gradient(135deg, #ee0979 0%, #ff6a00 100%);
+    color: white;
+}
+
+.finch-card-header.gradient-cyan {
+    background: linear-gradient(135deg, #0dcaf0 0%, #667eea 100%);
+    color: white;
+}
+
+.finch-card-header.gradient-orange {
+    background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+    color: white;
+}
+
+.finch-card-header h1,
+.finch-card-header h2,
+.finch-card-header h3,
+.finch-card-header h4,
+.finch-card-header h5,
+.finch-card-header h6 {
+    color: white;
+    margin: 0;
+}
+
+/* ============================================
+   PAGE HEADERS
+   ============================================ */
+
+.finch-page-header {
+    font-size: 2rem;
+    font-weight: 700;
+    margin-bottom: 8px;
+    color: #212529;
+}
+
+.finch-page-subtitle {
+    color: #6c757d;
+    font-size: 1rem;
+    margin-bottom: 24px;
+}
+
+/* ============================================
+   TABLES
+   ============================================ */
+
+.finch-table thead th {
+    background-color: #f8f9fa;
+    border-bottom: 2px solid #dee2e6;
+    font-weight: 600;
+    color: #495057;
+    text-transform: uppercase;
+    font-size: 0.8rem;
+    letter-spacing: 0.5px;
+    padding: 12px 16px;
+}
+
+.finch-table tbody tr {
+    transition: background-color 0.2s ease;
+}
+
+.finch-table tbody tr:hover {
+    background-color: #f8f9fa;
+}
+
+.finch-table td {
+    padding: 12px 16px;
+    vertical-align: middle;
+}
+
+/* ============================================
+   AMOUNT COLORS
+   ============================================ */
+
+.amount-income {
+    color: #198754;
+    font-weight: 600;
+}
+
+.amount-expense {
+    color: #dc3545;
+    font-weight: 600;
+}
+
+.amount-transfer {
+    color: #0dcaf0;
+    font-weight: 600;
+}
+
+.amount-net {
+    color: #667eea;
+    font-weight: 700;
+}
+
+.amount-positive {
+    color: #198754;
+    font-weight: 600;
+}
+
+.amount-negative {
+    color: #dc3545;
+    font-weight: 600;
+}
+
+/* ============================================
+   EMPTY STATES
+   ============================================ */
+
+.finch-empty-state {
+    text-align: center;
+    padding: 48px 24px;
+    color: #6c757d;
+}
+
+.finch-empty-icon {
+    font-size: 3rem;
+    margin-bottom: 12px;
+    opacity: 0.5;
+}
+
+.finch-empty-state h3 {
+    margin-bottom: 12px;
+    color: #495057;
+}
+
+.finch-empty-state p {
+    margin-bottom: 0;
+}
+
+/* ============================================
+   BUTTONS
+   ============================================ */
+
+.finch-btn {
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-weight: 600;
+    transition: all 0.2s ease;
+    border: none;
+}
+
+.finch-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.finch-btn-sm {
+    padding: 8px 16px;
+    font-size: 0.875rem;
+}
+
+.finch-btn-lg {
+    padding: 14px 28px;
+    font-size: 1.125rem;
+}
+
+/* ============================================
+   FORMS
+   ============================================ */
+
+.finch-form-card {
+    background: #f8f9fa;
+    border: 2px solid #e9ecef;
+    padding: 20px;
+    border-radius: 12px;
+    margin-bottom: 24px;
+}
+
+.finch-form-label {
+    font-weight: 500;
+    font-size: 0.9rem;
+    color: #495057;
+    margin-bottom: 0.5rem;
+}
+
+.finch-form-control {
+    border-radius: 8px;
+    border: 1px solid #ced4da;
+    padding: 10px 14px;
+    transition: all 0.2s ease;
+}
+
+.finch-form-control:focus {
+    border-color: #667eea;
+    box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
+}
+
+/* ============================================
+   MONTH NAVIGATION
+   ============================================ */
+
+.finch-month-nav {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-bottom: 24px;
+}
+
+.finch-month-btn {
+    padding: 10px 20px;
+    border: 2px solid #e9ecef;
+    background: white;
+    color: #495057;
+    border-radius: 8px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+    text-decoration: none;
+    display: inline-block;
+}
+
+.finch-month-btn:hover {
+    border-color: #667eea;
+    color: #667eea;
+    background: #f8f9fa;
+    text-decoration: none;
+}
+
+.finch-month-btn.active {
+    background: #667eea;
+    color: white;
+    border-color: #667eea;
+}
+
+/* ============================================
+   BADGES
+   ============================================ */
+
+.finch-badge {
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-weight: 500;
+    font-size: 0.85rem;
+    display: inline-block;
+}
+
+.finch-badge-success {
+    background-color: #d1e7dd;
+    color: #0f5132;
+}
+
+.finch-badge-warning {
+    background-color: #fff3cd;
+    color: #664d03;
+}
+
+.finch-badge-danger {
+    background-color: #f8d7da;
+    color: #842029;
+}
+
+.finch-badge-info {
+    background-color: #cff4fc;
+    color: #055160;
+}
+
+.finch-badge-purple {
+    background-color: #e7e3fc;
+    color: #4c3ba7;
+}
+
+.finch-badge-primary {
+    background-color: #cfe2ff;
+    color: #084298;
+}
+
+/* ============================================
+   PROGRESS BARS
+   ============================================ */
+
+.finch-progress {
+    height: 24px;
+    border-radius: 8px;
+    background-color: #e9ecef;
+    overflow: hidden;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.finch-progress-bar {
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-weight: 600;
+    font-size: 0.875rem;
+    transition: width 0.6s ease;
+}
+
+/* ============================================
+   SUMMARY CARDS
+   ============================================ */
+
+.finch-summary-card {
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    padding: 20px;
+    transition: all 0.3s ease;
+}
+
+.finch-summary-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+}
+
+.finch-summary-icon {
+    font-size: 2rem;
+    margin-bottom: 8px;
+}
+
+.finch-summary-label {
+    font-size: 0.85rem;
+    color: #6c757d;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+
+.finch-summary-value {
+    font-size: 2rem;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+/* ============================================
+   BREADCRUMBS
+   ============================================ */
+
+.finch-breadcrumb {
+    background: transparent;
+    padding: 0;
+    margin-bottom: 20px;
+    font-size: 0.9rem;
+}
+
+.finch-breadcrumb-item {
+    color: #6c757d;
+}
+
+.finch-breadcrumb-item.active {
+    color: #495057;
+    font-weight: 500;
+}
+
+.finch-breadcrumb-item + .finch-breadcrumb-item::before {
+    content: "›";
+    padding: 0 8px;
+    color: #adb5bd;
+}
+
+/* ============================================
+   COLLAPSIBLE SECTIONS
+   ============================================ */
+
+.finch-collapsible-header {
+    cursor: pointer;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px;
+    background: #f8f9fa;
+    border-radius: 8px;
+    transition: background 0.2s ease;
+}
+
+.finch-collapsible-header:hover {
+    background: #e9ecef;
+}
+
+.finch-collapsible-icon {
+    transition: transform 0.3s ease;
+}
+
+.finch-collapsible-icon.collapsed {
+    transform: rotate(-90deg);
+}
+
+/* ============================================
+   ALERTS & NOTIFICATIONS
+   ============================================ */
+
+.finch-alert {
+    padding: 16px 20px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    border-left: 4px solid;
+}
+
+.finch-alert-success {
+    background-color: #d1e7dd;
+    border-color: #0f5132;
+    color: #0f5132;
+}
+
+.finch-alert-info {
+    background-color: #cff4fc;
+    border-color: #055160;
+    color: #055160;
+}
+
+.finch-alert-warning {
+    background-color: #fff3cd;
+    border-color: #664d03;
+    color: #664d03;
+}
+
+.finch-alert-danger {
+    background-color: #f8d7da;
+    border-color: #842029;
+    color: #842029;
+}
+
+/* ============================================
+   STAT CARDS
+   ============================================ */
+
+.finch-stat-card {
+    border-left: 4px solid;
+    padding-left: 20px;
+}
+
+.finch-stat-card.stat-income {
+    border-color: #198754;
+}
+
+.finch-stat-card.stat-expense {
+    border-color: #dc3545;
+}
+
+.finch-stat-card.stat-transfer {
+    border-color: #0dcaf0;
+}
+
+.finch-stat-card.stat-net {
+    border-color: #667eea;
+}
+
+/* ============================================
+   RESPONSIVE UTILITIES
+   ============================================ */
+
+@media (max-width: 768px) {
+    .finch-page-header {
+        font-size: 1.5rem;
+    }
+
+    .finch-summary-value {
+        font-size: 1.5rem;
+    }
+
+    .finch-card {
+        padding: 16px;
+    }
+
+    .finch-month-nav {
+        gap: 4px;
+    }
+
+    .finch-month-btn {
+        padding: 8px 12px;
+        font-size: 0.875rem;
+    }
+}
+
+/* ============================================
+   UTILITY CLASSES
+   ============================================ */
+
+.text-gradient-purple {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.text-gradient-green {
+    background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.border-start-purple {
+    border-left: 4px solid #667eea !important;
+}
+
+.border-start-green {
+    border-left: 4px solid #11998e !important;
+}
+
+.border-start-red {
+    border-left: 4px solid #ee0979 !important;
+}
+
+.border-start-cyan {
+    border-left: 4px solid #0dcaf0 !important;
+}

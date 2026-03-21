@@ -4,6 +4,7 @@ from django.db.models.functions import Coalesce
 from datetime import date as dt_date, timedelta
 from decimal import Decimal
 from django.db.models import SET_NULL
+from django.contrib.auth.models import User
 
 
 
@@ -17,6 +18,10 @@ class Category(models.Model):
         null=True,
         blank=True,
         help_text="Leave blank if not applicable.",
+    )
+    is_archived = models.BooleanField(
+        default=False,
+        help_text="Archived categories are hidden from dashboards and dropdowns but preserved in historical data.",
     )
 
     def __str__(self):
@@ -1423,3 +1428,27 @@ class MonthEndIncomeCategorySnapshot(models.Model):
 
     def __str__(self):
         return f"{self.income_category.name} - {self.month_close.month_display}: target ${self.monthly_target}"
+
+
+class WebAuthnCredential(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="webauthn_credentials")
+    credential_id = models.BinaryField(unique=True)
+    public_key = models.BinaryField()
+    sign_count = models.PositiveBigIntegerField(default=0)
+    device_name = models.CharField(max_length=100, default="Passkey")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.user.username} — {self.device_name}"
+
+
+class UserProfile(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="profile")
+    pinned_categories = models.ManyToManyField(
+        "Category",
+        blank=True,
+        help_text="Expense categories shown on this user's dashboard. Leave empty to show all.",
+    )
+
+    def __str__(self):
+        return f"Profile: {self.user.username}"

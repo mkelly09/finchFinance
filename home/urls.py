@@ -4,8 +4,8 @@ from django.conf import settings
 from django.conf.urls.static import static
 
 urlpatterns = [
-    path("", views.dashboard, name="dashboard"),
-    path("category-progress/", views.category_progress, name="category_progress"),
+    path("", views.category_progress, name="category_progress"),
+    path("activity/", views.dashboard, name="dashboard"),
 
     # Expense category drilldown (existing)
     path("category-expenses/<str:category_name>/", views.category_expense_list, name="category_expense_list"),
@@ -49,6 +49,16 @@ urlpatterns = [
 
     # Net Worth Tracker
     path('net-worth/', views.net_worth_tracker, name='net_worth_tracker'),
+
+    # User Profile
+    path('profile/', views.profile, name='profile'),
+
+    # WebAuthn / Passkey
+    path('webauthn/register/begin/', views.webauthn_register_begin, name='webauthn_register_begin'),
+    path('webauthn/register/complete/', views.webauthn_register_complete, name='webauthn_register_complete'),
+    path('webauthn/auth/begin/', views.webauthn_auth_begin, name='webauthn_auth_begin'),
+    path('webauthn/auth/complete/', views.webauthn_auth_complete, name='webauthn_auth_complete'),
+    path('webauthn/delete/', views.webauthn_delete, name='webauthn_delete'),
 
 ]
 

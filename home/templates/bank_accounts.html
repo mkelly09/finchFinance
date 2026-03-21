@@ -9,38 +9,6 @@
     Add new accounts here and click any row to edit or delete.
   </p>
 
-  <!-- Summary Cards -->
-  {% if accounts %}
-  <div class="row g-3 mb-4">
-    <div class="col-md-4">
-      <div class="finch-summary-card">
-        <div class="finch-summary-icon">🏦</div>
-        <div class="finch-summary-label">Total Accounts</div>
-        <div class="finch-summary-value amount-net">{{ accounts|length }}</div>
-      </div>
-    </div>
-    <div class="col-md-4">
-      <div class="finch-summary-card">
-        <div class="finch-summary-icon">💳</div>
-        <div class="finch-summary-label">Withholding Accounts</div>
-        <div class="finch-summary-value amount-cyan">
-          {% with withholding_count=0 %}
-            {% for account in accounts %}{% if account.is_withholding_account %}{% if forloop.last %}{{ forloop.counter }}{% endif %}{% endif %}{% endfor %}
-          {% endwith %}
-        </div>
-      </div>
-    </div>
-    <div class="col-md-4">
-      <div class="finch-summary-card">
-        <div class="finch-summary-icon">📊</div>
-        <div class="finch-summary-label">Tracked Institutions</div>
-        <div class="finch-summary-value amount-purple" style="font-size: 1.5rem;">
-          View Below
-        </div>
-      </div>
-    </div>
-  </div>
-  {% endif %}
 
   <!-- Add Account (top card) -->
   <div class="finch-card">
@@ -116,42 +84,29 @@
           <thead>
             <tr>
               <th>Name</th>
-              <th>Institution</th>
               <th>Type</th>
-              <th>Last 4</th>
               <th>Withholding?</th>
-              <th class="text-end">Current balance</th>
+              <th class="text-end">Balance</th>
               <th>Last updated</th>
               <th class="text-end">Available (if withholding)</th>
-              <th class="text-end">Ledger</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
             {% for account in accounts %}
               <tr style="cursor: pointer;"
-                  onclick="openAccountModal(
-                    '{{ account.id }}',
-                    '{{ account.name|escapejs }}',
-                    '{{ account.institution|default_if_none:''|escapejs }}',
-                    '{{ account.account_type }}',
-                    '{{ account.account_number_last4|default_if_none:''|escapejs }}',
-                    '{{ account.is_withholding_account|yesno:"true,false" }}',
-                    '{{ account.current_balance }}',
-                    '{{ account.is_active|yesno:"true,false" }}'
-                  )">
+                  onclick="window.location='{% url 'bank_account_detail' account.id %}'">
                 <td>{{ account.name }}</td>
-                <td>{{ account.institution }}</td>
                 <td>{{ account.get_account_type_display }}</td>
-                <td>{{ account.account_number_last4 }}</td>
                 <td>
                   {% if account.is_withholding_account %}
                     <span class="badge bg-info text-dark">Withholding</span>
                   {% else %}
-                    No
+                    —
                   {% endif %}
                 </td>
                 <td class="text-end">
-                  <span class="amount-net">
+                  <span class="amount-net fw-semibold">
                     {% if account.current_balance %}
                       ${{ account.current_balance|floatformat:2|intcomma }}
                     {% else %}
@@ -174,16 +129,25 @@
                   {% endif %}
                 </td>
                 <td class="text-end">
-                  <a href="{% url 'bank_account_detail' account.id %}"
-                     class="btn btn-sm btn-outline-secondary finch-btn-sm"
-                     onclick="event.stopPropagation();">
-                    📊 View ledger
-                  </a>
+                  <button type="button"
+                          class="btn btn-sm btn-outline-secondary finch-btn-sm"
+                          onclick="event.stopPropagation(); openAccountModal(
+                            '{{ account.id }}',
+                            '{{ account.name|escapejs }}',
+                            '{{ account.institution|default_if_none:''|escapejs }}',
+                            '{{ account.account_type }}',
+                            '{{ account.account_number_last4|default_if_none:''|escapejs }}',
+                            '{{ account.is_withholding_account|yesno:"true,false" }}',
+                            '{{ account.current_balance }}',
+                            '{{ account.is_active|yesno:"true,false" }}'
+                          )">
+                    ✏️ Edit
+                  </button>
                 </td>
               </tr>
             {% empty %}
               <tr>
-                <td colspan="9">
+                <td colspan="7">
                   <div class="finch-empty-state">
                     <div class="finch-empty-icon">💳</div>
                     <h3>No Accounts Yet</h3>
@@ -198,7 +162,7 @@
 
       <div class="mt-3 pt-3 border-top">
         <p class="text-muted small mb-0">
-          💡 <strong>Tip:</strong> Click any row to edit or delete that account.
+          💡 <strong>Tip:</strong> Click any row to view the ledger. Use the Edit button to update or delete an account.
         </p>
       </div>
   </div>

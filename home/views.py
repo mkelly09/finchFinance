@@ -591,7 +591,7 @@ def dashboard(request):
         "income_by_source": dict(income_by_source),
         "expenses_by_category": dict(expenses_by_category),
         "targets_by_category": targets_by_category,
-        "all_categories": Category.objects.all(),
+        "all_categories": Category.objects.filter(is_archived=False),
         "category_summaries": category_summaries,
         "accounts": accounts,
         "income_categories": IncomeCategory.objects.all().order_by("name"),
@@ -701,7 +701,7 @@ def category_progress(request):
             })
     else:
         # Open/current month: use live model values
-        for category in Category.objects.exclude(monthly_limit__isnull=True):
+        for category in Category.objects.filter(is_archived=False).exclude(monthly_limit__isnull=True):
             total_spent = (
                 Expense.objects.filter(category=category, date__range=(first_day, last_day))
                 .aggregate(total=Sum("amount"))["total"]
@@ -961,12 +961,26 @@ def category_progress(request):
         health_class = "secondary"
         health_icon = "➖"
 
+    # Filter expense_summaries to pinned categories if the user has any pinned
+    from .models import UserProfile
+    show_all = request.GET.get("show_all") == "1"
+    try:
+        profile = request.user.profile
+        pinned_names = set(profile.pinned_categories.values_list("name", flat=True))
+    except UserProfile.DoesNotExist:
+        pinned_names = set()
+
+    pinned_only = bool(pinned_names) and not show_all
+    if pinned_only:
+        expense_summaries = [s for s in expense_summaries if s["name"] in pinned_names]
+
     context = {
         "income_summaries": income_summaries,
         "expense_summaries": expense_summaries,
         "withholding_summaries": withholding_summaries,
         "selected_month": f"{year:04d}-{month:02d}",
         "selected_month_display": selected_month_display,
+        "pinned_only": pinned_only,
         # Cash flow health data
         "total_income_actual": total_income_actual,
         "jenna_transfers": jenna_transfers,
@@ -1145,7 +1159,7 @@ def category_expense_list(request, category_name):
         "trend_values": trend_values,
         "range_total": range_total,
         # Modal dropdowns
-        "all_categories": Category.objects.all().order_by("name"),
+        "all_categories": Category.objects.filter(is_archived=False).order_by("name"),
         "accounts": BankAccount.objects.all().order_by("institution", "name"),
         "all_rental_units": RentalUnit.objects.select_related("property").order_by("property__name", "name"),
         "cra_categories": CRARentalExpenseCategory.objects.filter(is_active=True).order_by("sort_order", "name"),
@@ -2544,7 +2558,7 @@ def rental_tax_category_detail(request, property_id, cra_category_id):
     )
 
     # Context for modal form
-    all_categories = Category.objects.all().order_by("name")
+    all_categories = Category.objects.filter(is_archived=False).order_by("name")
     accounts = BankAccount.objects.all().order_by("name")
     all_rental_units = RentalUnit.objects.select_related("property").all().order_by("property__name", "name")
     cra_categories = CRARentalExpenseCategory.objects.filter(is_active=True).order_by("sort_order", "name")
@@ -2590,12 +2604,25 @@ class WithholdingCategoryForm(ModelForm):
         }
 
 def category_list(request):
-    expense_categories = Category.objects.all().order_by("name")
+    expense_categories = Category.objects.filter(is_archived=False).order_by("name")
+    archived_categories = Category.objects.filter(is_archived=True).order_by("name")
     income_categories = IncomeCategory.objects.all().order_by("name")
     withholding_categories = WithholdingCategory.objects.select_related("account").all().order_by("name")
 
     if request.method == "POST":
         action = request.POST.get("action")
+
+        if action == "expense_archive":
+            cat = get_object_or_404(Category, pk=request.POST.get("id"))
+            cat.is_archived = True
+            cat.save()
+            return redirect("category_list")
+
+        if action == "expense_unarchive":
+            cat = get_object_or_404(Category, pk=request.POST.get("id"))
+            cat.is_archived = False
+            cat.save()
+            return redirect("category_list")
 
         if action == "expense_delete":
             cat = get_object_or_404(Category, pk=request.POST.get("id"))
@@ -2660,6 +2687,7 @@ def category_list(request):
 
     return render(request, "category_list.html", {
         "expense_categories": expense_categories,
+        "archived_categories": archived_categories,
         "income_categories": income_categories,
         "withholding_categories": withholding_categories,
         "expense_form": expense_form,
@@ -4725,7 +4753,7 @@ def withholding_category_detail(request, pk):
     range_total = sum(ev["signed_amount"] for ev in derived_events)
 
     # Context data for modals
-    all_categories = Category.objects.all().order_by("name")
+    all_categories = Category.objects.filter(is_archived=False).order_by("name")
     accounts = BankAccount.objects.all().order_by("name")
     all_rental_units = RentalUnit.objects.select_related("property").order_by("property__name", "name")
     cra_categories = CRARentalExpenseCategory.objects.all().order_by("name")
@@ -5469,7 +5497,7 @@ def month_end_wizard(request):
                     })
 
         # Planned expense analysis (categories with monthly_limit > 0, exclude Business Expense)
-        planned_categories = Category.objects.filter(monthly_limit__gt=0).exclude(name='Business Expense')
+        planned_categories = Category.objects.filter(is_archived=False, monthly_limit__gt=0).exclude(name='Business Expense')
         planned_breakdown = []
         total_planned_budget = Decimal('0.00')
         total_planned_spent = Decimal('0.00')
@@ -5498,6 +5526,8 @@ def month_end_wizard(request):
         # Unplanned expense analysis (categories with monthly_limit = 0 or NULL, exclude Business Expense)
         from django.db.models import Q
         unplanned_categories = Category.objects.filter(
+            is_archived=False
+        ).filter(
             Q(monthly_limit__isnull=True) | Q(monthly_limit=0)
         ).exclude(name='Business Expense')
         unplanned_breakdown = []
@@ -5766,7 +5796,7 @@ def month_end_wizard(request):
             print(f"[MONTH-END] Calculating enhanced summary data...")
             # Planned expense totals (monthly_limit > 0, exclude Business Expense)
             from django.db.models import Q
-            planned_categories = Category.objects.filter(monthly_limit__gt=0).exclude(name='Business Expense')
+            planned_categories = Category.objects.filter(is_archived=False, monthly_limit__gt=0).exclude(name='Business Expense')
             total_planned_budget = Decimal('0.00')
             total_planned_spent = Decimal('0.00')
             for category in planned_categories:
@@ -5778,6 +5808,8 @@ def month_end_wizard(request):
 
             # Unplanned expense totals (monthly_limit = 0 or NULL, exclude Business Expense)
             unplanned_categories = Category.objects.filter(
+                is_archived=False
+            ).filter(
                 Q(monthly_limit__isnull=True) | Q(monthly_limit=0)
             ).exclude(name='Business Expense')
             total_unplanned_spent = Decimal('0.00')
@@ -6172,4 +6204,121 @@ def net_worth_tracker(request):
     }
 
     return render(request, 'net_worth_tracker.html', context)
+
+
+import base64
+import json
+import webauthn
+from webauthn.helpers.structs import (
+    AuthenticatorSelectionCriteria,
+    UserVerificationRequirement,
+    ResidentKeyRequirement,
+)
+from webauthn.helpers import base64url_to_bytes
+from django.contrib.auth import login as auth_login
+from .models import WebAuthnCredential
+
+
+def _webauthn_rp_id():
+    return settings.WEBAUTHN_RP_ID
+
+
+def _webauthn_origin():
+    return settings.WEBAUTHN_ORIGIN
+
+
+@require_POST
+def webauthn_register_begin(request):
+    user = request.user
+    options = webauthn.generate_registration_options(
+        rp_id=_webauthn_rp_id(),
+        rp_name=settings.WEBAUTHN_RP_NAME,
+        user_id=str(user.id).encode(),
+        user_name=user.username,
+        user_display_name=user.get_full_name() or user.username,
+        authenticator_selection=AuthenticatorSelectionCriteria(
+            resident_key=ResidentKeyRequirement.REQUIRED,
+            user_verification=UserVerificationRequirement.REQUIRED,
+        ),
+    )
+    request.session["webauthn_register_challenge"] = base64.b64encode(options.challenge).decode()
+    return JsonResponse(json.loads(webauthn.options_to_json(options)))
+
+
+@require_POST
+def webauthn_register_complete(request):
+    try:
+        data = json.loads(request.body)
+        challenge = base64.b64decode(request.session.pop("webauthn_register_challenge", ""))
+        verification = webauthn.verify_registration_response(
+            credential=data,
+            expected_challenge=challenge,
+            expected_rp_id=_webauthn_rp_id(),
+            expected_origin=_webauthn_origin(),
+        )
+        WebAuthnCredential.objects.create(
+            user=request.user,
+            credential_id=bytes(verification.credential_id),
+            public_key=bytes(verification.credential_public_key),
+            sign_count=verification.sign_count,
+            device_name=data.get("deviceName", "Passkey"),
+        )
+        return JsonResponse({"ok": True})
+    except Exception as e:
+        return JsonResponse({"ok": False, "error": str(e)}, status=400)
+
+
+@require_POST
+def webauthn_auth_begin(request):
+    options = webauthn.generate_authentication_options(
+        rp_id=_webauthn_rp_id(),
+        user_verification=UserVerificationRequirement.REQUIRED,
+    )
+    request.session["webauthn_auth_challenge"] = base64.b64encode(options.challenge).decode()
+    return JsonResponse(json.loads(webauthn.options_to_json(options)))
+
+
+@require_POST
+def webauthn_auth_complete(request):
+    try:
+        data = json.loads(request.body)
+        challenge = base64.b64decode(request.session.pop("webauthn_auth_challenge", ""))
+        raw_id = base64url_to_bytes(data["rawId"])
+        cred = WebAuthnCredential.objects.get(credential_id=raw_id)
+        verification = webauthn.verify_authentication_response(
+            credential=data,
+            expected_challenge=challenge,
+            expected_rp_id=_webauthn_rp_id(),
+            expected_origin=_webauthn_origin(),
+            credential_public_key=bytes(cred.public_key),
+            credential_current_sign_count=cred.sign_count,
+        )
+        cred.sign_count = verification.new_sign_count
+        cred.save(update_fields=["sign_count"])
+        auth_login(request, cred.user, backend="django.contrib.auth.backends.ModelBackend")
+        return JsonResponse({"ok": True})
+    except WebAuthnCredential.DoesNotExist:
+        return JsonResponse({"ok": False, "error": "Passkey not recognised."}, status=400)
+    except Exception as e:
+        return JsonResponse({"ok": False, "error": str(e)}, status=400)
+
+
+@require_POST
+def webauthn_delete(request):
+    cred_id = request.POST.get("credential_id")
+    WebAuthnCredential.objects.filter(user=request.user, pk=cred_id).delete()
+    return redirect("profile")
+
+
+def profile(request):
+    user = request.user
+    if request.method == "POST":
+        user.first_name = request.POST.get("first_name", "").strip()
+        user.last_name = request.POST.get("last_name", "").strip()
+        user.email = request.POST.get("email", "").strip()
+        user.save()
+        messages.success(request, "Profile updated.")
+        return redirect("profile")
+    credentials = WebAuthnCredential.objects.filter(user=user).order_by("-created_at")
+    return render(request, "profile.html", {"user": user, "credentials": credentials})
 
