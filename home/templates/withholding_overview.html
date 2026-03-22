@@ -225,6 +225,7 @@
         </div>
 
         {% if account.withholding_categories.all %}
+          <div class="table-responsive">
           <table class="table buckets-table table-sm align-middle mb-0">
             <thead>
               <tr>
@@ -306,6 +307,7 @@
               {% endfor %}
             </tbody>
           </table>
+          </div>
         {% else %}
           <div style="padding: 24px;">
             <p class="text-muted mb-0">No buckets defined for this account yet.</p>

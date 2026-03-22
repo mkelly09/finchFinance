@@ -289,6 +289,22 @@
   .col-category { width: 170px; }
   .col-notes { width: 240px; }
 
+  /* Mobile: hide secondary columns, switch to auto layout */
+  @media (max-width: 575px) {
+    .dashboard-table { table-layout: auto; }
+    #expense-table .col-category,
+    #expense-table .col-location,
+    #expense-table .col-account,
+    #expense-table .col-rental,
+    #expense-table .col-notes { display: none; }
+    #income-table .col-taxable,
+    #income-table .col-account,
+    #income-table .col-rental,
+    #income-table .col-notes { display: none; }
+    #transfer-table .col-category,
+    #transfer-table .col-notes { display: none; }
+  }
+
   /* Amount color coding */
   .amount-income { color: #198754; font-weight: 600; }
   .amount-expense { color: #dc3545; font-weight: 600; }
@@ -673,7 +689,7 @@
           <div class="col-12">
             <label class="form-label">Receipt (optional)</label>
             <input type="file" name="receipt" class="form-control"
-                   accept="image/*,.pdf" capture="environment">
+                   accept="image/*,.pdf">
           </div>
         </div>
 
@@ -699,6 +715,7 @@
     </div>
     <div class="section-content" id="income-content">
       {% if income_entries %}
+        <div class="table-responsive">
         <table class="table table-hover dashboard-table sortable-table" id="income-table">
           <thead>
             <tr>
@@ -781,6 +798,7 @@
             {% endfor %}
           </tbody>
         </table>
+        </div>
       {% else %}
         <div class="empty-state">
           <div class="empty-state-icon">💵</div>
@@ -805,6 +823,7 @@
     </div>
     <div class="section-content" id="transfer-content">
       {% if transfer_entries %}
+        <div class="table-responsive">
         <table class="table table-hover dashboard-table sortable-table" id="transfer-table">
           <thead>
             <tr>
@@ -892,6 +911,7 @@
             {% endfor %}
           </tbody>
         </table>
+        </div>
       {% else %}
         <div class="empty-state">
           <div class="empty-state-icon">🔄</div>
@@ -916,6 +936,7 @@
     </div>
     <div class="section-content" id="expense-content">
       {% if expense_entries %}
+        <div class="table-responsive">
         <table class="table table-hover dashboard-table sortable-table" id="expense-table">
           <thead>
             <tr>
@@ -994,6 +1015,7 @@
             {% endfor %}
           </tbody>
         </table>
+        </div>
       {% else %}
         <div class="empty-state">
           <div class="empty-state-icon">💸</div>
