@@ -62,6 +62,12 @@
           <strong>+${{ jenna_transfers|floatformat:2|intcomma }}</strong>
         </div>
         {% endif %}
+        {% if jenna_remaining > 0 %}
+        <div class="metric">
+          <span>Jenna (Expected Remaining):</span>
+          <strong>+${{ jenna_remaining|floatformat:2|intcomma }}</strong>
+        </div>
+        {% endif %}
         <div class="metric">
           <span>Expected Remaining:</span>
           <strong>+${{ total_income_remaining|floatformat:2|intcomma }}</strong>

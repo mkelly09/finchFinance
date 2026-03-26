@@ -46,6 +46,9 @@ from .models import (
     MonthEndExpenseCategorySnapshot,
     MonthEndWithholdingCategorySnapshot,
     MonthEndIncomeCategorySnapshot,
+
+    # ✅ Forecast worksheet persistence
+    ForecastWorksheet,
 )
 
 
@@ -799,6 +802,7 @@ def category_progress(request):
 
     # ========= TRACK JENNA TRANSFERS AS INCOME =========
     jenna_transfers = Decimal("0.00")
+    jenna_remaining = Decimal("0.00")
     try:
         jenna_account = BankAccount.objects.get(name="Jenna (EXT)")
         # Outflows from Jenna's account = money she's sending
@@ -810,6 +814,9 @@ def category_progress(request):
             .aggregate(total=Sum("amount"))["total"]
             or Decimal("0.00")
         )
+        # Fixed expected monthly Jenna transfer amount
+        jenna_monthly_expected = Decimal("4000.00")
+        jenna_remaining = max(Decimal("0.00"), jenna_monthly_expected - jenna_transfers)
     except BankAccount.DoesNotExist:
         pass  # Account doesn't exist, leave at 0
 
@@ -939,7 +946,7 @@ def category_progress(request):
     # ========= CASH FLOW HEALTH CALCULATION =========
     # Calculate total projected income
     total_income_with_jenna = total_income_actual + jenna_transfers
-    total_projected_income = total_income_with_jenna + total_income_remaining
+    total_projected_income = total_income_with_jenna + total_income_remaining + jenna_remaining
 
     # Calculate all outflows (actual and planned)
     # Expenses: actual spent + remaining budget
@@ -1004,6 +1011,7 @@ def category_progress(request):
         # Cash flow health data
         "total_income_actual": total_income_actual,
         "jenna_transfers": jenna_transfers,
+        "jenna_remaining": jenna_remaining,
         "total_income_remaining": total_income_remaining,
         "total_income_with_jenna": total_income_with_jenna,
         "total_projected_income": total_projected_income,
@@ -5390,9 +5398,10 @@ def create_comprehensive_backup(month_str, description="Month-end close"):
 
 def month_forecast_worksheet(request):
     """
-    Ephemeral month forecast worksheet.
-    Shows actual-to-date transactions as editable rows; JavaScript handles
-    toggling, amount overrides, and new projected rows — nothing is saved.
+    Month forecast worksheet.
+    Shows actual-to-date transactions as editable rows. JavaScript handles
+    toggling, amount overrides, and new projected rows. State is auto-saved
+    per month to ForecastWorksheet so it persists across daily visits.
     """
     today = date.today()
     month_str = request.GET.get('month', today.strftime('%Y-%m'))
@@ -5474,11 +5483,37 @@ def month_forecast_worksheet(request):
             'amount': float(t.amount),
         })
 
+    # Jenna transfers count as income (same as category_progress dashboard).
+    # Use string IDs prefixed 'jenna_<id>' to avoid collision with Income PKs.
+    jenna_forecast_total = Decimal('0.00')
+    try:
+        jenna_account = BankAccount.objects.get(name='Jenna (EXT)')
+        jenna_qs = Transfer.objects.filter(
+            date__range=(month_first_day, month_last_day),
+            from_account=jenna_account,
+            parent_transfer__isnull=True,
+        ).order_by('date', 'id')
+        for t in jenna_qs:
+            label = 'Jenna Transfer'
+            if t.description:
+                label += f' — {t.description}'
+            income_data.append({
+                'id': f'jenna_{t.id}',
+                'date': t.date.strftime('%b %d'),
+                'label': label,
+                'amount': float(t.amount),
+                'jenna': True,
+            })
+            jenna_forecast_total += t.amount
+    except BankAccount.DoesNotExist:
+        pass
+
     # Calculate fixed actuals (same logic as wizard step 2)
     total_income = Decimal('0.00')
     for e in income_entries:
         if not (e.income_category and e.income_category.name == 'Business Reimbursement'):
             total_income += e.amount
+    total_income += jenna_forecast_total
 
     total_planned_spent = Decimal('0.00')
     total_true_unplanned_spent = Decimal('0.00')
@@ -5496,6 +5531,11 @@ def month_forecast_worksheet(request):
             total_withholding_actual += t.amount
 
     actual_surplus = total_income - total_planned_spent - total_true_unplanned_spent - total_withholding_actual
+
+    # Load saved worksheet state for this month (if any)
+    saved_ws = ForecastWorksheet.objects.filter(month=month_first_day).first()
+    saved_state_json = json.dumps(saved_ws.state if saved_ws else {})
+    saved_at = saved_ws.updated_at.strftime('%H:%M') if saved_ws else None
 
     # Available months for selector dropdown
     all_dates = (
@@ -5529,7 +5569,30 @@ def month_forecast_worksheet(request):
         'actual_true_unplanned': float(total_true_unplanned_spent),
         'actual_withholding': float(total_withholding_actual),
         'actual_surplus': float(actual_surplus),
+
+        # Saved worksheet state
+        'saved_state_json': saved_state_json,
+        'saved_at': saved_at,
     })
+
+
+@require_POST
+def month_forecast_save(request):
+    """Auto-save endpoint for the forecast worksheet. Stores a delta state per month."""
+    try:
+        body = json.loads(request.body)
+        month_str = body.get('month', '')
+        state = body.get('state', {})
+        year, month_num = map(int, month_str.split('-'))
+        month_first_day = date(year, month_num, 1)
+    except Exception:
+        return JsonResponse({'ok': False}, status=400)
+
+    obj, _ = ForecastWorksheet.objects.update_or_create(
+        month=month_first_day,
+        defaults={'state': state},
+    )
+    return JsonResponse({'ok': True, 'updated_at': obj.updated_at.strftime('%H:%M')})
 
 
 def month_end_wizard(request):
@@ -5608,6 +5671,19 @@ def month_end_wizard(request):
     )
     total_expenses = sum(e.amount for e in expense_entries)
     total_transfers = sum(t.amount for t in transfer_entries)
+
+    # Jenna transfers count as income (same as category_progress dashboard)
+    _jenna_close_total = Decimal('0.00')
+    try:
+        _jenna_close_account = BankAccount.objects.get(name='Jenna (EXT)')
+        _jenna_close_total = Transfer.objects.filter(
+            date__range=(month_first_day, month_last_day),
+            from_account=_jenna_close_account,
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+        total_income += _jenna_close_total
+    except BankAccount.DoesNotExist:
+        pass
+
     net_savings = total_income - total_expenses
     transaction_count = income_entries.count() + expense_entries.count() + transfer_entries.count()
 
@@ -5675,6 +5751,13 @@ def month_end_wizard(request):
                         'name': inc_category.name,
                         'amount': amount
                     })
+
+        # Jenna transfers shown as a separate income line
+        if _jenna_close_total > 0:
+            income_breakdown.append({
+                'name': 'Jenna Transfers',
+                'amount': _jenna_close_total,
+            })
 
         # Planned expense analysis (categories with monthly_limit > 0, exclude Business Expense)
         planned_categories = Category.objects.filter(is_archived=False, monthly_limit__gt=0).exclude(name='Business Expense')

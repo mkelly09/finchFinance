@@ -1461,6 +1461,23 @@ class MonthEndIncomeCategorySnapshot(models.Model):
         return f"{self.income_category.name} - {self.month_close.month_display}: target ${self.monthly_target}"
 
 
+class ForecastWorksheet(models.Model):
+    """
+    Persists per-month forecast worksheet adjustments.
+    Stores only the delta from DB state (overrides, excluded rows, new projected rows)
+    so fresh actual transactions always appear correctly on the next visit.
+    """
+    month = models.DateField(unique=True, help_text="First day of the forecast month")
+    state = models.JSONField(default=dict, help_text="Delta state: overrides, excluded, new_rows")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-month']
+
+    def __str__(self):
+        return f"Forecast {self.month.strftime('%B %Y')}"
+
+
 class WebAuthnCredential(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="webauthn_credentials")
     credential_id = models.BinaryField(unique=True)

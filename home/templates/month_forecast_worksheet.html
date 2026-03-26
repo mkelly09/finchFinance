@@ -68,8 +68,10 @@
   <!-- Page Header -->
   <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
     <div>
-      <h4 class="mb-0">📈 Month Forecast — {{ month_display }}</h4>
-      <small class="text-muted">Adjust rows, toggle items, or add projected transactions. Nothing is saved.</small>
+      <h4 class="mb-0">📈 Month Forecast — {{ month_display }}
+        <span id="save-indicator" class="text-muted fw-normal" style="font-size:0.75rem; margin-left:0.5rem;">{% if saved_at %}Saved {{ saved_at }} ✓{% endif %}</span>
+      </h4>
+      <small class="text-muted">Adjust rows, toggle items, or add projected transactions. Changes auto-save.</small>
     </div>
     <div class="d-flex align-items-center gap-2">
       {% if is_current_month %}
@@ -250,6 +252,88 @@ let ws = {
   withholding: {{ withholding_json|safe }}.map(r => ({...r, originalAmount: r.amount, included: true, isNew: false})),
 };
 let nextId = -1;
+
+// ─── Saved state ─────────────────────────────────────────────────────────────
+const SAVED_STATE = {{ saved_state_json|safe }};
+
+function applySavedState() {
+  const { overrides = {}, excluded = [], new_rows = [] } = SAVED_STATE;
+  // Apply amount overrides (keys are string ids, matching item.id which may be int or string)
+  Object.entries(overrides).forEach(([id, amt]) => {
+    for (const section of ['income','planned','unplanned','withholding']) {
+      const item = ws[section].find(r => String(r.id) === String(id));
+      if (item) { item.amount = amt; break; }
+    }
+  });
+  // Apply excluded (stored as original id values)
+  excluded.forEach(id => {
+    for (const section of ['income','planned','unplanned','withholding']) {
+      const item = ws[section].find(r => String(r.id) === String(id));
+      if (item) { item.included = false; break; }
+    }
+  });
+  // Re-add new projected rows with fresh negative IDs
+  new_rows.forEach(r => {
+    ws[r.section].push({
+      id: nextId--, label: r.label, date: '', amount: r.amount,
+      originalAmount: 0, included: true, isNew: true,
+      category_name: r.category_name || '', budget: r.budget || 0,
+      withholdingFunded: r.withholdingFunded || false,
+    });
+  });
+}
+
+// ─── Auto-save ───────────────────────────────────────────────────────────────
+let _saveTimer = null;
+
+function scheduleSave() {
+  clearTimeout(_saveTimer);
+  setSaveStatus('pending');
+  _saveTimer = setTimeout(doSave, 1500);
+}
+
+function doSave() {
+  setSaveStatus('saving');
+  fetch('{% url "month_forecast_save" %}', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json', 'X-CSRFToken': getCsrf()},
+    body: JSON.stringify({month: '{{ month_str }}', state: computeDelta()}),
+  })
+  .then(r => r.json())
+  .then(d => { if (d.ok) setSaveStatus('saved', d.updated_at); else setSaveStatus('idle'); })
+  .catch(() => setSaveStatus('idle'));
+}
+
+function computeDelta() {
+  const overrides = {}, excluded = [], new_rows = [];
+  ['income','planned','unplanned','withholding'].forEach(section => {
+    ws[section].forEach(item => {
+      if (item.isNew) {
+        new_rows.push({section, label: item.label, amount: item.amount,
+                       category_name: item.category_name || '', budget: item.budget || 0,
+                       withholdingFunded: item.withholdingFunded || false});
+      } else {
+        if (Math.abs(item.amount - item.originalAmount) > 0.001) overrides[String(item.id)] = item.amount;
+        if (!item.included) excluded.push(item.id);
+      }
+    });
+  });
+  return {overrides, excluded, new_rows};
+}
+
+function setSaveStatus(status, time) {
+  const el = document.getElementById('save-indicator');
+  if (!el) return;
+  if (status === 'pending')      el.textContent = '';
+  else if (status === 'saving')  el.textContent = 'Saving…';
+  else if (status === 'saved')   el.textContent = `Saved ${time} ✓`;
+  else                           el.textContent = '';
+}
+
+function getCsrf() {
+  const c = document.cookie.split(';').map(s => s.trim()).find(s => s.startsWith('csrftoken='));
+  return c ? c.split('=')[1] : '';
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function fmt(n) {
@@ -453,6 +537,7 @@ function renderPlanned() {
 }
 
 function renderAll() {
+  applySavedState();
   ['income', 'planned', 'unplanned', 'withholding'].forEach(renderSection);
   recalculate();
 }
@@ -472,6 +557,7 @@ function toggleRow(section, id) {
     }
   }
   recalculate();
+  scheduleSave();
 }
 
 function updateAmount(section, id, val) {
@@ -485,10 +571,11 @@ function updateAmount(section, id, val) {
     if (tr) {
       const isModified = !item.isNew && (val !== item.originalAmount);
       const wasModified = tr.classList.contains('modified');
-      if (isModified !== wasModified) { renderSection(section); return; }
+      if (isModified !== wasModified) { renderSection(section); recalculate(); scheduleSave(); return; }
     }
   }
   recalculate();
+  scheduleSave();
 }
 
 function addRow(section) {
@@ -500,18 +587,19 @@ function addRow(section) {
   renderSection(section);
   const tbody = document.getElementById('tbody-' + section);
   const rows = tbody.querySelectorAll('tr');
-  // Find last non-total row that has an input
   for (let i = rows.length - 1; i >= 0; i--) {
     const inp = rows[i].querySelector('.ws-new-label, .ws-amount');
     if (inp) { inp.focus(); break; }
   }
   recalculate();
+  scheduleSave();
 }
 
 function removeRow(section, id) {
   ws[section] = ws[section].filter(r => r.id !== id);
   renderSection(section);
   recalculate();
+  scheduleSave();
 }
 
 // ─── Recalculate summary ─────────────────────────────────────────────────────

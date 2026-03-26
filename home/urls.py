@@ -48,6 +48,7 @@ urlpatterns = [
     path('month-end-close/', views.month_end_wizard, name='month_end_wizard'),
 
     # Month Forecast Worksheet
+    path('month-forecast/save/', views.month_forecast_save, name='month_forecast_save'),
     path('month-forecast/', views.month_forecast_worksheet, name='month_forecast_worksheet'),
 
     # Net Worth Tracker
