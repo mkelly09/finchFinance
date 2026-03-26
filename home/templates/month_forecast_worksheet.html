@@ -1,0 +1,545 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block content %}
+<style>
+  .ws-amount {
+    width: 110px;
+    text-align: right;
+    border: 1px solid transparent;
+    background: transparent;
+    padding: 2px 4px;
+    border-radius: 4px;
+    font-size: 0.9rem;
+  }
+  .ws-amount:focus {
+    border-color: #0d6efd;
+    background: #fff;
+    outline: none;
+  }
+  .ws-amount:disabled {
+    color: #aaa;
+  }
+  .ws-label {
+    font-size: 0.88rem;
+  }
+  .ws-new-label {
+    width: 200px;
+    font-size: 0.88rem;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    padding: 2px 6px;
+  }
+  .ws-row.excluded td {
+    opacity: 0.35;
+  }
+  .ws-row.modified .ws-amount {
+    color: #0d6efd;
+  }
+  .badge-modified {
+    font-size: 0.65rem;
+    vertical-align: middle;
+  }
+  .badge-withholding {
+    font-size: 0.65rem;
+    vertical-align: middle;
+  }
+  .section-total {
+    font-size: 0.85rem;
+    font-weight: 600;
+  }
+  .ws-summary td, .ws-summary th {
+    font-size: 0.9rem;
+  }
+  .ws-summary .surplus-row td {
+    font-weight: 700;
+    font-size: 1rem;
+    border-top: 2px solid #dee2e6;
+  }
+  .estimate-col {
+    font-weight: 600;
+  }
+  .surplus-positive { color: #198754; }
+  .surplus-negative { color: #dc3545; }
+</style>
+
+<div class="container mt-4">
+
+  <!-- Page Header -->
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
+    <div>
+      <h4 class="mb-0">📈 Month Forecast — {{ month_display }}</h4>
+      <small class="text-muted">Adjust rows, toggle items, or add projected transactions. Nothing is saved.</small>
+    </div>
+    <div class="d-flex align-items-center gap-2">
+      {% if is_current_month %}
+        <span class="badge bg-primary">{{ days_remaining }} day{{ days_remaining|pluralize }} remaining</span>
+      {% endif %}
+      <!-- Month selector -->
+      <a href="?month={{ prev_month_str }}" class="btn btn-sm btn-outline-secondary">‹</a>
+      <div class="dropdown">
+        <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">
+          {{ month_display }}
+        </button>
+        <ul class="dropdown-menu dropdown-menu-end" style="max-height:300px;overflow-y:auto;">
+          {% for m in available_months %}
+          <li><a class="dropdown-item {% if m.key == month_str %}active{% endif %}" href="?month={{ m.key }}">{{ m.display }}</a></li>
+          {% endfor %}
+        </ul>
+      </div>
+      <a href="?month={{ next_month_str }}" class="btn btn-sm btn-outline-secondary">›</a>
+    </div>
+  </div>
+
+  <!-- Summary Card -->
+  <div class="card mb-4 shadow-sm">
+    <div class="card-header bg-dark text-white">
+      <strong>Projected Month-End Summary</strong>
+    </div>
+    <div class="card-body p-0">
+      <table class="table table-sm ws-summary mb-0">
+        <thead class="table-light">
+          <tr>
+            <th></th>
+            <th class="text-end">Actual to Date</th>
+            <th class="text-end estimate-col">Worksheet Estimate</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Income</td>
+            <td class="text-end">${{ actual_income|floatformat:2 }}</td>
+            <td class="text-end estimate-col" id="sum-income">—</td>
+          </tr>
+          <tr>
+            <td>Planned Expenses</td>
+            <td class="text-end">-${{ actual_planned|floatformat:2 }}</td>
+            <td class="text-end estimate-col" id="sum-planned">—</td>
+          </tr>
+          <tr>
+            <td>Unplanned Expenses <small class="text-muted">(out-of-pocket)</small></td>
+            <td class="text-end">-${{ actual_true_unplanned|floatformat:2 }}</td>
+            <td class="text-end estimate-col" id="sum-unplanned">—</td>
+          </tr>
+          <tr>
+            <td>Withholding Contributions</td>
+            <td class="text-end">-${{ actual_withholding|floatformat:2 }}</td>
+            <td class="text-end estimate-col" id="sum-withholding">—</td>
+          </tr>
+        </tbody>
+        <tfoot>
+          <tr class="surplus-row">
+            <td>Surplus</td>
+            <td class="text-end {% if actual_surplus >= 0 %}surplus-positive{% else %}surplus-negative{% endif %}">
+              {% if actual_surplus >= 0 %}${{ actual_surplus|floatformat:2 }}{% else %}-${{ actual_surplus|floatformat:2|cut:"-" }}{% endif %}
+            </td>
+            <td class="text-end estimate-col" id="sum-surplus">—</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  </div>
+
+  <!-- Income Section -->
+  <div class="card mb-3">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <strong>💰 Income</strong>
+      <span class="section-total text-success" id="total-income">$0.00</span>
+    </div>
+    <div class="card-body p-0">
+      <table class="table table-sm mb-0">
+        <tbody id="tbody-income"></tbody>
+        <tfoot>
+          <tr>
+            <td colspan="4">
+              <button class="btn btn-sm btn-outline-success" onclick="addRow('income')">+ Add income row</button>
+            </td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  </div>
+
+  <!-- Planned Expenses Section -->
+  <div class="card mb-3">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <strong>📋 Planned Expenses</strong>
+      <span class="section-total text-danger" id="total-planned">$0.00</span>
+    </div>
+    <div class="card-body p-0">
+      <table class="table table-sm mb-0">
+        <thead class="table-light">
+          <tr>
+            <th style="width:32px"></th>
+            <th>Category / Transaction</th>
+            <th class="text-end">Budget</th>
+            <th class="text-end">Spent</th>
+            <th class="text-end">Variance</th>
+            <th style="width:32px"></th>
+          </tr>
+        </thead>
+        <tbody id="tbody-planned"></tbody>
+        <tfoot id="tfoot-planned">
+          <tr>
+            <td colspan="6">
+              <button class="btn btn-sm btn-outline-danger" onclick="addRow('planned')">+ Add planned expense</button>
+            </td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  </div>
+
+  <!-- Unplanned Expenses Section -->
+  <div class="card mb-3">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <strong>💸 Unplanned Expenses</strong>
+      <span class="section-total text-danger" id="total-unplanned">$0.00</span>
+    </div>
+    <div class="card-body p-0">
+      <table class="table table-sm mb-0">
+        <tbody id="tbody-unplanned"></tbody>
+        <tfoot>
+          <tr>
+            <td colspan="4">
+              <button class="btn btn-sm btn-outline-danger" onclick="addRow('unplanned')">+ Add unplanned expense</button>
+            </td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  </div>
+
+  <!-- Withholding Contributions Section -->
+  <div class="card mb-5">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <strong>🪣 Withholding Contributions</strong>
+      <span class="section-total text-warning" id="total-withholding">$0.00</span>
+    </div>
+    <div class="card-body p-0">
+      <table class="table table-sm mb-0">
+        <tbody id="tbody-withholding"></tbody>
+        <tfoot>
+          <tr>
+            <td colspan="4">
+              <button class="btn btn-sm btn-outline-warning" onclick="addRow('withholding')">+ Add withholding row</button>
+            </td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ─── Server data ────────────────────────────────────────────────────────────
+const ACTUALS = {
+  income:      {{ actual_income }},
+  planned:     {{ actual_planned }},
+  unplanned:   {{ actual_true_unplanned }},
+  withholding: {{ actual_withholding }},
+};
+
+// ─── Worksheet state ─────────────────────────────────────────────────────────
+const _expenseJson = {{ expense_json|safe }};
+let ws = {
+  income:      {{ income_json|safe }}.map(r => ({...r, originalAmount: r.amount, included: true, isNew: false})),
+  planned:     _expenseJson.filter(r => r.section === 'planned').map(r => ({...r, originalAmount: r.amount, included: true, isNew: false})),
+  unplanned:   _expenseJson.filter(r => r.section === 'unplanned').map(r => ({...r, originalAmount: r.amount, included: true, isNew: false, withholdingFunded: r.withholding_funded})),
+  withholding: {{ withholding_json|safe }}.map(r => ({...r, originalAmount: r.amount, included: true, isNew: false})),
+};
+let nextId = -1;
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+function fmt(n) {
+  return '$' + Math.abs(n).toLocaleString('en-CA', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+}
+
+function fmtVariance(v) {
+  return (v > 0 ? '+' : v < 0 ? '-' : '') + fmt(v);
+}
+
+function makeAmountInput(item, section) {
+  const amtInput = document.createElement('input');
+  amtInput.type = 'number';
+  amtInput.className = 'ws-amount';
+  amtInput.step = '0.01';
+  amtInput.min = '0';
+  amtInput.value = item.amount.toFixed(2);
+  amtInput.disabled = !item.included;
+  amtInput.oninput = e => updateAmount(section, item.id, parseFloat(e.target.value) || 0);
+  amtInput.onfocus = e => e.target.select();
+  return amtInput;
+}
+
+// ─── Generic section renderer (income, unplanned, withholding) ───────────────
+function renderSection(section) {
+  if (section === 'planned') { renderPlanned(); return; }
+  const tbody = document.getElementById('tbody-' + section);
+  tbody.innerHTML = '';
+  ws[section].forEach(item => {
+    const tr = document.createElement('tr');
+    tr.className = 'ws-row' + (item.included ? '' : ' excluded') + (!item.isNew && item.amount !== item.originalAmount ? ' modified' : '');
+    tr.dataset.id = item.id;
+
+    // Checkbox
+    const tdCb = document.createElement('td');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.checked = item.included; cb.className = 'form-check-input';
+    cb.onchange = () => toggleRow(section, item.id);
+    tdCb.appendChild(cb); tr.appendChild(tdCb);
+
+    // Label
+    const tdLabel = document.createElement('td');
+    if (item.isNew) {
+      const inp = document.createElement('input');
+      inp.type = 'text'; inp.className = 'ws-new-label'; inp.value = item.label; inp.placeholder = 'Description';
+      inp.oninput = e => { item.label = e.target.value; };
+      tdLabel.appendChild(inp);
+    } else {
+      const dateSpan = document.createElement('span');
+      dateSpan.className = 'text-muted me-2'; dateSpan.textContent = item.date + ' ·';
+      tdLabel.appendChild(dateSpan);
+      const labelSpan = document.createElement('span');
+      labelSpan.className = 'ws-label'; labelSpan.textContent = item.label;
+      tdLabel.appendChild(labelSpan);
+      if (item.withholdingFunded) {
+        const badge = document.createElement('span');
+        badge.className = 'badge bg-secondary ms-1 badge-withholding';
+        badge.title = 'Funded from withholding bucket'; badge.textContent = 'withholding';
+        tdLabel.appendChild(badge);
+      }
+    }
+    tr.appendChild(tdLabel);
+
+    // Amount
+    const tdAmt = document.createElement('td');
+    tdAmt.className = 'text-end';
+    if (!item.isNew && item.amount !== item.originalAmount) {
+      const badge = document.createElement('span');
+      badge.className = 'badge bg-primary ms-1 badge-modified'; badge.textContent = 'modified';
+      tdAmt.appendChild(badge);
+    }
+    tdAmt.appendChild(makeAmountInput(item, section));
+    tr.appendChild(tdAmt);
+
+    // Delete (new rows only)
+    const tdDel = document.createElement('td');
+    if (item.isNew) {
+      const btn = document.createElement('button');
+      btn.className = 'btn btn-sm btn-link text-danger p-0'; btn.textContent = '×';
+      btn.onclick = () => removeRow(section, item.id);
+      tdDel.appendChild(btn);
+    }
+    tr.appendChild(tdDel);
+
+    tbody.appendChild(tr);
+  });
+}
+
+// ─── Planned section renderer (grouped by category with Budget/Spent/Variance) ─
+function renderPlanned() {
+  const tbody = document.getElementById('tbody-planned');
+  tbody.innerHTML = '';
+
+  // Group items by category_name; new rows get a synthetic category
+  const groups = {};
+  ws.planned.forEach(item => {
+    const cat = item.isNew ? '— New —' : item.category_name;
+    if (!groups[cat]) groups[cat] = { budget: item.budget || 0, items: [] };
+    groups[cat].items.push(item);
+  });
+
+  let totalBudget = 0, totalSpent = 0;
+
+  Object.entries(groups).forEach(([catName, group]) => {
+    const catSpent = group.items.filter(r => r.included).reduce((a, r) => a + (r.amount || 0), 0);
+    const catBudget = group.budget;
+    const catVariance = catSpent - catBudget;
+    totalBudget += catBudget;
+    totalSpent += catSpent;
+
+    // Category header row
+    const hdr = document.createElement('tr');
+    hdr.className = 'table-light';
+    hdr.innerHTML = `
+      <td></td>
+      <td><strong>${catName}</strong></td>
+      <td class="text-end text-muted">${catBudget > 0 ? fmt(catBudget) : '—'}</td>
+      <td class="text-end"><strong>${fmt(catSpent)}</strong></td>
+      <td class="text-end ${catVariance > 0 ? 'text-danger' : catVariance < 0 ? 'text-success' : ''}">
+        <strong>${catBudget > 0 ? fmtVariance(catVariance) : '—'}</strong>
+      </td>
+      <td></td>`;
+    tbody.appendChild(hdr);
+
+    // Individual transaction rows (indented)
+    group.items.forEach(item => {
+      const tr = document.createElement('tr');
+      tr.className = 'ws-row' + (item.included ? '' : ' excluded') + (!item.isNew && item.amount !== item.originalAmount ? ' modified' : '');
+      tr.dataset.id = item.id;
+
+      // Checkbox
+      const tdCb = document.createElement('td');
+      const cb = document.createElement('input');
+      cb.type = 'checkbox'; cb.checked = item.included; cb.className = 'form-check-input';
+      cb.onchange = () => toggleRow('planned', item.id);
+      tdCb.appendChild(cb); tr.appendChild(tdCb);
+
+      // Label (indented)
+      const tdLabel = document.createElement('td');
+      tdLabel.style.paddingLeft = '1.5rem';
+      if (item.isNew) {
+        const inp = document.createElement('input');
+        inp.type = 'text'; inp.className = 'ws-new-label'; inp.value = item.label; inp.placeholder = 'Description';
+        inp.oninput = e => { item.label = e.target.value; };
+        tdLabel.appendChild(inp);
+      } else {
+        const dateSpan = document.createElement('span');
+        dateSpan.className = 'text-muted me-2'; dateSpan.textContent = item.date + ' ·';
+        tdLabel.appendChild(dateSpan);
+        const labelSpan = document.createElement('span');
+        labelSpan.className = 'ws-label'; labelSpan.textContent = item.label;
+        tdLabel.appendChild(labelSpan);
+      }
+      tr.appendChild(tdLabel);
+
+      // Budget col (blank on transaction rows)
+      tr.appendChild(document.createElement('td'));
+
+      // Amount
+      const tdAmt = document.createElement('td');
+      tdAmt.className = 'text-end';
+      if (!item.isNew && item.amount !== item.originalAmount) {
+        const badge = document.createElement('span');
+        badge.className = 'badge bg-primary ms-1 badge-modified'; badge.textContent = 'modified';
+        tdAmt.appendChild(badge);
+      }
+      tdAmt.appendChild(makeAmountInput(item, 'planned'));
+      tr.appendChild(tdAmt);
+
+      // Variance col (blank on transaction rows)
+      tr.appendChild(document.createElement('td'));
+
+      // Delete (new rows only)
+      const tdDel = document.createElement('td');
+      if (item.isNew) {
+        const btn = document.createElement('button');
+        btn.className = 'btn btn-sm btn-link text-danger p-0'; btn.textContent = '×';
+        btn.onclick = () => removeRow('planned', item.id);
+        tdDel.appendChild(btn);
+      }
+      tr.appendChild(tdDel);
+
+      tbody.appendChild(tr);
+    });
+  });
+
+  // Total footer row (inside tbody so it's always visible)
+  const totalVariance = totalSpent - totalBudget;
+  const tfootRow = document.createElement('tr');
+  tfootRow.style.borderTop = '3px solid #000';
+  tfootRow.innerHTML = `
+    <td></td>
+    <td><strong>Total Planned</strong></td>
+    <td class="text-end"><strong>${fmt(totalBudget)}</strong></td>
+    <td class="text-end"><strong>${fmt(totalSpent)}</strong></td>
+    <td class="text-end ${totalVariance > 0 ? 'text-danger' : totalVariance < 0 ? 'text-success' : ''}">
+      <strong>${fmtVariance(totalVariance)}</strong>
+    </td>
+    <td></td>`;
+  tbody.appendChild(tfootRow);
+}
+
+function renderAll() {
+  ['income', 'planned', 'unplanned', 'withholding'].forEach(renderSection);
+  recalculate();
+}
+
+// ─── Actions ─────────────────────────────────────────────────────────────────
+function toggleRow(section, id) {
+  const item = ws[section].find(r => r.id === id);
+  if (!item) return;
+  item.included = !item.included;
+  if (section === 'planned') {
+    renderPlanned();
+  } else {
+    const tr = document.querySelector(`#tbody-${section} tr[data-id="${id}"]`);
+    if (tr) {
+      tr.classList.toggle('excluded', !item.included);
+      tr.querySelector('.ws-amount').disabled = !item.included;
+    }
+  }
+  recalculate();
+}
+
+function updateAmount(section, id, val) {
+  const item = ws[section].find(r => r.id === id);
+  if (!item) return;
+  item.amount = val;
+  if (section === 'planned') {
+    renderPlanned();
+  } else {
+    const tr = document.querySelector(`#tbody-${section} tr[data-id="${id}"]`);
+    if (tr) {
+      const isModified = !item.isNew && (val !== item.originalAmount);
+      const wasModified = tr.classList.contains('modified');
+      if (isModified !== wasModified) { renderSection(section); return; }
+    }
+  }
+  recalculate();
+}
+
+function addRow(section) {
+  const id = nextId--;
+  ws[section].push({
+    id, date: '', label: '', category_name: '— New —', budget: 0,
+    amount: 0, originalAmount: 0, included: true, isNew: true, withholdingFunded: false,
+  });
+  renderSection(section);
+  const tbody = document.getElementById('tbody-' + section);
+  const rows = tbody.querySelectorAll('tr');
+  // Find last non-total row that has an input
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const inp = rows[i].querySelector('.ws-new-label, .ws-amount');
+    if (inp) { inp.focus(); break; }
+  }
+  recalculate();
+}
+
+function removeRow(section, id) {
+  ws[section] = ws[section].filter(r => r.id !== id);
+  renderSection(section);
+  recalculate();
+}
+
+// ─── Recalculate summary ─────────────────────────────────────────────────────
+function recalculate() {
+  const sum = section => ws[section].filter(r => r.included).reduce((acc, r) => acc + (r.amount || 0), 0);
+
+  const income = sum('income');
+  const planned = sum('planned');
+  const unplannedOOP = ws['unplanned'].filter(r => r.included && !r.withholdingFunded).reduce((acc, r) => acc + (r.amount || 0), 0);
+  const withholding = sum('withholding');
+  const surplus = income - planned - unplannedOOP - withholding;
+
+  document.getElementById('total-income').textContent = fmt(income);
+  document.getElementById('total-planned').textContent = fmt(planned);
+  document.getElementById('total-unplanned').textContent = fmt(sum('unplanned'));
+  document.getElementById('total-withholding').textContent = fmt(withholding);
+
+  document.getElementById('sum-income').textContent = fmt(income);
+  document.getElementById('sum-planned').textContent = '-' + fmt(planned);
+  document.getElementById('sum-unplanned').textContent = '-' + fmt(unplannedOOP);
+  document.getElementById('sum-withholding').textContent = '-' + fmt(withholding);
+
+  const surplusEl = document.getElementById('sum-surplus');
+  surplusEl.textContent = (surplus < 0 ? '-' : '') + fmt(surplus);
+  surplusEl.className = 'text-end estimate-col ' + (surplus >= 0 ? 'surplus-positive' : 'surplus-negative');
+}
+
+// ─── Init ────────────────────────────────────────────────────────────────────
+renderAll();
+</script>
+{% endblock %}
