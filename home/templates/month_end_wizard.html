@@ -1,0 +1,789 @@
+{% extends 'base.html' %}
+{% load humanize %}
+
+{% block content %}
+
+<style>
+  .wizard-container {
+    max-width: 900px;
+    margin: 0 auto;
+  }
+
+  .wizard-progress {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 2rem;
+    position: relative;
+  }
+
+  .wizard-progress::before {
+    content: '';
+    position: absolute;
+    top: 20px;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: #e0e0e0;
+    z-index: 0;
+  }
+
+  .wizard-step {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    position: relative;
+    z-index: 1;
+  }
+
+  .wizard-step-circle {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: white;
+    border: 2px solid #e0e0e0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    transition: all 0.3s ease;
+  }
+
+  .wizard-step.active .wizard-step-circle {
+    background: #667eea;
+    border-color: #667eea;
+    color: white;
+  }
+
+  .wizard-step.completed .wizard-step-circle {
+    background: #198754;
+    border-color: #198754;
+    color: white;
+  }
+
+  .wizard-step-label {
+    font-size: 0.875rem;
+    color: #6c757d;
+    text-align: center;
+  }
+
+  .wizard-step.active .wizard-step-label {
+    color: #667eea;
+    font-weight: 600;
+  }
+
+  .wizard-card {
+    background: white;
+    border-radius: 12px;
+    padding: 2rem;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  }
+
+  .summary-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 1rem 0;
+    border-bottom: 1px solid #e9ecef;
+  }
+
+  .summary-row:last-child {
+    border-bottom: none;
+    font-weight: 700;
+    font-size: 1.1rem;
+  }
+
+  .summary-label {
+    color: #6c757d;
+  }
+
+  .summary-value {
+    font-weight: 600;
+  }
+
+  .summary-value.income {
+    color: #198754;
+  }
+
+  .summary-value.expense {
+    color: #dc3545;
+  }
+
+  .month-card {
+    border: 2px solid #e9ecef;
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin-bottom: 1rem;
+    transition: all 0.2s ease;
+    cursor: pointer;
+  }
+
+  .month-card:hover:not(.disabled) {
+    border-color: #667eea;
+    box-shadow: 0 2px 8px rgba(102, 126, 234, 0.2);
+  }
+
+  .month-card.disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    background: #f8f9fa;
+  }
+
+  .month-card.closed {
+    border-color: #198754;
+    background: #f0fdf4;
+  }
+
+  .wizard-actions {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 2rem;
+    padding-top: 2rem;
+    border-top: 1px solid #e9ecef;
+  }
+
+  .account-snapshot-table {
+    width: 100%;
+    margin-top: 1rem;
+  }
+
+  .account-snapshot-table td {
+    padding: 0.75rem;
+    border-bottom: 1px solid #e9ecef;
+  }
+
+  .account-snapshot-table tr:last-child td {
+    border-bottom: 2px solid #667eea;
+    font-weight: 700;
+  }
+</style>
+
+<div class="wizard-container container my-4">
+  <h1 class="finch-page-header">🔒 Month-End Close Wizard</h1>
+  <p class="finch-page-subtitle">Lock your month and create financial snapshots</p>
+
+  <!-- Progress Bar -->
+  <div class="wizard-progress">
+    <div class="wizard-step {% if step == 1 %}active{% elif step > 1 %}completed{% endif %}">
+      <div class="wizard-step-circle">1</div>
+      <div class="wizard-step-label">Select Month</div>
+    </div>
+    <div class="wizard-step {% if step == 2 %}active{% elif step > 2 %}completed{% endif %}">
+      <div class="wizard-step-circle">2</div>
+      <div class="wizard-step-label">Financial Summary</div>
+    </div>
+    <div class="wizard-step {% if step == 3 %}active{% elif step > 3 %}completed{% endif %}">
+      <div class="wizard-step-circle">3</div>
+      <div class="wizard-step-label">Account Balances</div>
+    </div>
+    <div class="wizard-step {% if step == 4 %}active{% elif step > 4 %}completed{% endif %}">
+      <div class="wizard-step-circle">4</div>
+      <div class="wizard-step-label">Net Worth</div>
+    </div>
+    <div class="wizard-step {% if step == 5 %}active{% endif %}">
+      <div class="wizard-step-circle">5</div>
+      <div class="wizard-step-label">Confirm</div>
+    </div>
+  </div>
+
+  <!-- Step 1: Select Month -->
+  {% if step == 1 %}
+  <div class="wizard-card">
+    <h3 class="mb-4">Select Month to Close</h3>
+
+    {% for month_date, month_data in months %}
+      {% if month_data.can_close %}
+        <a href="?step=2&month={{ month_data.key }}" class="text-decoration-none">
+          <div class="month-card">
+            <div class="d-flex justify-content-between align-items-center">
+              <div>
+                <h5 class="mb-1">{{ month_data.display }}</h5>
+                <small class="text-muted">Click to close this month</small>
+              </div>
+              <div class="text-end">
+                <span class="badge bg-primary">Available</span>
+              </div>
+            </div>
+          </div>
+        </a>
+      {% elif month_data.is_closed %}
+        <div class="month-card closed disabled">
+          <div class="d-flex justify-content-between align-items-center">
+            <div>
+              <h5 class="mb-1">{{ month_data.display }}</h5>
+              <small class="text-success">✓ Already closed</small>
+            </div>
+            <div class="text-end">
+              <span class="badge bg-success">Closed</span>
+            </div>
+          </div>
+        </div>
+      {% else %}
+        <div class="month-card disabled">
+          <div class="d-flex justify-content-between align-items-center">
+            <div>
+              <h5 class="mb-1">{{ month_data.display }}</h5>
+              <small class="text-muted">Cannot close future months</small>
+            </div>
+            <div class="text-end">
+              <span class="badge bg-secondary">Future</span>
+            </div>
+          </div>
+        </div>
+      {% endif %}
+    {% endfor %}
+
+    <div class="wizard-actions">
+      <a href="{% url 'dashboard' %}" class="btn btn-outline-secondary finch-btn">
+        ← Cancel
+      </a>
+      <div></div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Step 2: Financial Summary -->
+  {% if step == 2 %}
+  <div class="wizard-card">
+    <h3 class="mb-4">📊 Financial Summary: {{ month_display }}</h3>
+
+    <div class="alert alert-info mb-4">
+      <strong>Review the detailed financial summary for {{ month_display }}</strong>
+      <p class="mb-0 mt-2">This analysis will be saved as a permanent snapshot.</p>
+    </div>
+
+    <!-- Income Breakdown -->
+    <div class="card mb-4">
+      <div class="card-header" style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%); color: white;">
+        <h5 class="mb-0">💵 Income Breakdown</h5>
+      </div>
+      <div class="card-body">
+        {% if income_breakdown %}
+        <table class="table table-sm mb-0">
+          <thead>
+            <tr>
+              <th>Category</th>
+              <th class="text-end">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in income_breakdown %}
+            <tr>
+              <td>{{ item.name }}</td>
+              <td class="text-end"><strong class="text-success">${{ item.amount|floatformat:2|intcomma }}</strong></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+          <tfoot>
+            <tr style="border-top: 4px solid #000;">
+              <td><strong>Total Income</strong></td>
+              <td class="text-end"><strong class="text-success">${{ total_income|floatformat:2|intcomma }}</strong></td>
+            </tr>
+          </tfoot>
+        </table>
+        {% else %}
+        <p class="text-muted mb-0">No income for this month.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Business Reimbursement (Excluded) -->
+    {% if business_reimbursement_total > 0 %}
+    <div class="card mb-4 border-info">
+      <div class="card-header bg-info text-white">
+        <h5 class="mb-0">💼 Business Reimbursement (Excluded from Income)</h5>
+      </div>
+      <div class="card-body">
+        <div class="alert alert-info mb-0">
+          <strong>${{ business_reimbursement_total|floatformat:2|intcomma }}</strong> in business reimbursements this month.
+          <p class="mb-0 mt-2"><small>This amount is excluded from income calculations as it offsets business expenses.</small></p>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Planned Expenses (with budgets) -->
+    <div class="card mb-4">
+      <div class="card-header" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
+        <h5 class="mb-0">📋 Planned Expenses (Categories with Budgets)</h5>
+      </div>
+      <div class="card-body">
+        <div class="d-flex justify-content-between mb-3">
+          <div>
+            <strong>Total Budget:</strong> ${{ total_planned_budget|floatformat:2|intcomma }}
+          </div>
+          <div>
+            <strong>Total Spent:</strong> ${{ total_planned_spent|floatformat:2|intcomma }}
+          </div>
+          <div>
+            <strong>Variance:</strong>
+            <span class="{% if planned_variance > 0 %}text-danger{% elif planned_variance < 0 %}text-success{% endif %}">
+              {% if planned_variance > 0 %}+{% endif %}${{ planned_variance|floatformat:2|intcomma }}
+            </span>
+          </div>
+        </div>
+
+        {% if planned_breakdown %}
+        <table class="table table-sm mb-0">
+          <thead>
+            <tr>
+              <th>Category</th>
+              <th class="text-end">Budget</th>
+              <th class="text-end">Spent</th>
+              <th class="text-end">Variance</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in planned_breakdown %}
+            <tr>
+              <td>{{ item.name }}</td>
+              <td class="text-end">${{ item.budget|floatformat:2|intcomma }}</td>
+              <td class="text-end">${{ item.spent|floatformat:2|intcomma }}</td>
+              <td class="text-end">
+                <span class="{% if item.status == 'over' %}text-danger{% elif item.status == 'under' %}text-success{% endif %}">
+                  {% if item.variance > 0 %}+{% endif %}${{ item.variance|floatformat:2|intcomma }}
+                  {% if item.status == 'under' %}✓{% elif item.status == 'over' %}⚠️{% elif item.status == 'on_target' %}✓{% endif %}
+                </span>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+          <tfoot>
+            <tr style="border-top: 4px solid #000;">
+              <td><strong>Total Planned</strong></td>
+              <td class="text-end"><strong>${{ total_planned_budget|floatformat:2|intcomma }}</strong></td>
+              <td class="text-end"><strong>${{ total_planned_spent|floatformat:2|intcomma }}</strong></td>
+              <td class="text-end">
+                <strong class="{% if planned_variance > 0 %}text-danger{% elif planned_variance < 0 %}text-success{% endif %}">
+                  {% if planned_variance > 0 %}+{% endif %}${{ planned_variance|floatformat:2|intcomma }}
+                </strong>
+              </td>
+            </tr>
+          </tfoot>
+        </table>
+        {% else %}
+        <p class="text-muted mb-0">No planned expense categories for this month.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Unplanned Expenses -->
+    <div class="card mb-4">
+      <div class="card-header bg-secondary text-white">
+        <h5 class="mb-0">💸 Unplanned Expenses (No Budget Set)</h5>
+      </div>
+      <div class="card-body">
+        {% if unplanned_breakdown %}
+        <table class="table table-sm mb-0">
+          <thead>
+            <tr>
+              <th>Category</th>
+              <th class="text-end">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in unplanned_breakdown %}
+            <tr>
+              <td>{{ item.name }}</td>
+              <td class="text-end">${{ item.spent|floatformat:2|intcomma }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+          <tfoot>
+            <tr style="border-top: 4px solid #000;">
+              <td><strong>Total Unplanned</strong></td>
+              <td class="text-end"><strong>${{ total_unplanned_spent|floatformat:2|intcomma }}</strong></td>
+            </tr>
+          </tfoot>
+        </table>
+        {% else %}
+        <p class="text-muted mb-0">No unplanned expenses for this month.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Business Expense (Reimbursable) -->
+    {% if business_expense_total > 0 %}
+    <div class="card mb-4 border-info">
+      <div class="card-header bg-info text-white">
+        <h5 class="mb-0">💼 Business Expense (Reimbursable)</h5>
+      </div>
+      <div class="card-body">
+        <div class="alert alert-info mb-0">
+          <strong>${{ business_expense_total|floatformat:2|intcomma }}</strong> in business expenses this month.
+          <p class="mb-0 mt-2"><small>This amount is excluded from net calculations as it will be reimbursed.</small></p>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Withholding/Savings -->
+    <div class="card mb-4">
+      <div class="card-header" style="background: linear-gradient(135deg, #20c997 0%, #17a2b8 100%); color: white;">
+        <h5 class="mb-0">🏦 Savings Contributions (Withholding Buckets)</h5>
+      </div>
+      <div class="card-body">
+        <div class="d-flex justify-content-between mb-3">
+          <div>
+            <strong>Total Target:</strong> ${{ total_withholding_target|floatformat:2|intcomma }}
+          </div>
+          <div>
+            <strong>Total Contributed:</strong> ${{ total_withholding_actual|floatformat:2|intcomma }}
+          </div>
+          <div>
+            <strong>Variance:</strong>
+            <span class="{% if withholding_variance < 0 %}text-danger{% elif withholding_variance > 0 %}text-success{% endif %}">
+              {% if withholding_variance > 0 %}+{% endif %}${{ withholding_variance|floatformat:2|intcomma }}
+            </span>
+          </div>
+        </div>
+
+        {% if withholding_breakdown %}
+        <table class="table table-sm">
+          <thead>
+            <tr>
+              <th>Bucket</th>
+              <th class="text-end">Target</th>
+              <th class="text-end">Contributed</th>
+              <th class="text-end">Variance</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in withholding_breakdown %}
+            <tr>
+              <td>{{ item.name }}</td>
+              <td class="text-end">${{ item.target|floatformat:2|intcomma }}</td>
+              <td class="text-end">${{ item.actual|floatformat:2|intcomma }}</td>
+              <td class="text-end">
+                <span class="{% if item.status == 'under' %}text-danger{% elif item.status == 'over' %}text-success{% endif %}">
+                  {% if item.variance > 0 %}+{% endif %}${{ item.variance|floatformat:2|intcomma }}
+                  {% if item.status == 'over' %}✓{% elif item.status == 'under' %}⚠️{% elif item.status == 'on_target' %}✓{% endif %}
+                </span>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <p class="text-muted mb-0">No withholding buckets with monthly targets.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Excess Savings -->
+    {% if has_surplus %}
+    <div class="card mb-4 border-success">
+      <div class="card-header bg-success text-white">
+        <h5 class="mb-0">💰 Excess Available to Save</h5>
+      </div>
+      <div class="card-body">
+        <div class="alert alert-success">
+          <strong>Great news!</strong> You have a net surplus of ${{ net_surplus|floatformat:2|intcomma }} this month.
+          {% if planned_under_spend > 0 %}
+          <p class="mb-0 mt-2">You under-spent planned categories by ${{ planned_under_spend|floatformat:2|intcomma }}.</p>
+          {% endif %}
+        </div>
+
+        <div class="mb-4">
+          <h6 class="mb-3">Excess Breakdown:</h6>
+          <table class="table table-sm table-bordered mb-0">
+            <tbody>
+              <tr>
+                <td><strong>Total Income</strong></td>
+                <td class="text-end text-success"><strong>+${{ total_income|floatformat:2|intcomma }}</strong></td>
+              </tr>
+              <tr>
+                <td>Less: Planned Expenses</td>
+                <td class="text-end text-danger">−${{ total_planned_spent|floatformat:2|intcomma }}</td>
+              </tr>
+              <tr>
+                <td>Less: Unplanned Expenses</td>
+                <td class="text-end text-danger">−${{ total_unplanned_spent|floatformat:2|intcomma }}</td>
+              </tr>
+              <tr>
+                <td>Less: Withholding Contributions</td>
+                <td class="text-end text-primary">−${{ total_withholding_actual|floatformat:2|intcomma }}</td>
+              </tr>
+              <tr style="border-top: 4px solid #198754; background-color: #d1e7dd;">
+                <td><strong>Excess Available to Save</strong></td>
+                <td class="text-end"><strong class="text-success">${{ excess_to_save|floatformat:2|intcomma }}</strong></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <form method="post">
+          {% csrf_token %}
+          <input type="hidden" name="step" value="2">
+          <input type="hidden" name="month" value="{{ month }}">
+          <input type="hidden" name="save_excess" value="1">
+          <input type="hidden" name="excess_amount" value="{{ excess_to_save }}">
+
+          <div class="mb-3">
+            <label for="excess_account" class="form-label">
+              <strong>Save ${{ excess_to_save|floatformat:2|intcomma }} to which withholding account?</strong>
+            </label>
+            <select class="form-select" name="excess_account" id="excess_account" required>
+              <option value="">Select account...</option>
+              {% for account in withholding_accounts %}
+              <option value="{{ account.id }}">{{ account.name }} ({{ account.institution }})</option>
+              {% endfor %}
+            </select>
+            <div class="form-text">
+              This will create/contribute to an "Excess/Surplus" bucket in the selected account.
+            </div>
+          </div>
+
+          <div class="d-flex justify-content-between">
+            <a href="?step=1" class="btn btn-outline-secondary finch-btn">← Back</a>
+            <button type="submit" class="btn btn-primary finch-btn">Save & Continue →</button>
+          </div>
+        </form>
+      </div>
+    </div>
+    {% else %}
+    <div class="card mb-4 border-warning">
+      <div class="card-header bg-warning text-dark">
+        <h5 class="mb-0">💰 Overall Summary</h5>
+      </div>
+      <div class="card-body">
+        {% if true_surplus < 0 %}
+        <div class="alert alert-danger mb-4">
+          <strong>Deficit Alert!</strong> After accounting for all expenses and savings contributions, you have a deficit of <strong>${{ deficit_amount|floatformat:2|intcomma }}</strong> this month.
+        </div>
+        {% else %}
+        <div class="alert alert-info mb-4">
+          <strong>Balanced.</strong> Your income and all allocations (expenses + savings) balanced out this month.
+        </div>
+        {% endif %}
+
+        <h6 class="mb-3">Month Summary:</h6>
+        <table class="table table-sm table-bordered mb-0">
+          <tbody>
+            <tr>
+              <td><strong>Total Income</strong></td>
+              <td class="text-end text-success"><strong>+${{ total_income|floatformat:2|intcomma }}</strong></td>
+            </tr>
+            <tr>
+              <td>Less: Planned Expenses</td>
+              <td class="text-end text-danger">−${{ total_planned_spent|floatformat:2|intcomma }}</td>
+            </tr>
+            <tr>
+              <td>Less: Unplanned Expenses</td>
+              <td class="text-end text-danger">−${{ total_unplanned_spent|floatformat:2|intcomma }}</td>
+            </tr>
+            <tr>
+              <td>Less: Withholding Contributions</td>
+              <td class="text-end text-primary">−${{ total_withholding_actual|floatformat:2|intcomma }}</td>
+            </tr>
+            <tr style="border-top: 4px solid #000; {% if true_surplus < 0 %}background-color: #f8d7da;{% else %}background-color: #d1ecf1;{% endif %}">
+              <td><strong>Net Result</strong></td>
+              <td class="text-end">
+                <strong class="{% if true_surplus < 0 %}text-danger{% elif true_surplus > 0 %}text-success{% endif %}">
+                  {% if true_surplus >= 0 %}+{% endif %}${{ true_surplus|floatformat:2|intcomma }}
+                </strong>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="wizard-actions">
+      <a href="?step=1" class="btn btn-outline-secondary finch-btn">← Back</a>
+      <a href="?step=3&month={{ month }}" class="btn btn-primary finch-btn">Continue →</a>
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <!-- Step 3: Account Snapshots -->
+  {% if step == 3 %}
+  <div class="wizard-card">
+    <h3 class="mb-4">Account Balances: {{ month_display }}</h3>
+
+    <div class="alert alert-info mb-4">
+      <strong>💰 Current account balances</strong>
+      <p class="mb-0 mt-2">These balances will be saved as historical snapshots.</p>
+    </div>
+
+    <!-- Regular Accounts (Liquid Assets) -->
+    {% if regular_accounts %}
+    <h5 class="mb-3">💵 Liquid Assets</h5>
+    <table class="account-snapshot-table mb-4">
+      {% for account in regular_accounts %}
+        <tr>
+          <td>{{ account.name }}</td>
+          <td class="text-end">${{ account.balance|floatformat:2|intcomma }}</td>
+        </tr>
+      {% endfor %}
+      <tr style="border-top: 3px solid #000;">
+        <td><strong>Total Liquid Assets</strong></td>
+        <td class="text-end"><strong>${{ total_regular_balance|floatformat:2|intcomma }}</strong></td>
+      </tr>
+    </table>
+    {% endif %}
+
+    <!-- Retirement Accounts (RRSP, etc.) -->
+    {% if retirement_accounts %}
+    <h5 class="mb-3">🏦 Retirement Savings (RRSP)</h5>
+    {% if prev_close_month %}
+    <div class="alert alert-success mb-3">
+      <strong>Month-over-Month Change:</strong>
+      {% if retirement_increase >= 0 %}+{% endif %}${{ retirement_increase|floatformat:2|intcomma }}
+      <small class="d-block mt-1">Since {{ prev_close_month }}</small>
+    </div>
+    {% endif %}
+    <table class="account-snapshot-table mb-4">
+      {% for account in retirement_accounts %}
+        <tr>
+          <td>
+            {{ account.name }}
+            {% if account.prev_balance > 0 and prev_close_month %}
+              <small class="text-muted d-block">
+                Change: {% if account.increase >= 0 %}+{% endif %}${{ account.increase|floatformat:2|intcomma }}
+              </small>
+            {% endif %}
+          </td>
+          <td class="text-end">${{ account.balance|floatformat:2|intcomma }}</td>
+        </tr>
+      {% endfor %}
+      <tr style="border-top: 3px solid #000;">
+        <td><strong>Total Retirement Savings</strong></td>
+        <td class="text-end"><strong>${{ total_retirement_balance|floatformat:2|intcomma }}</strong></td>
+      </tr>
+    </table>
+    {% endif %}
+
+    <div class="wizard-actions">
+      <a href="?step=2&month={{ month }}" class="btn btn-outline-secondary finch-btn">
+        ← Back
+      </a>
+      <a href="?step=4&month={{ month }}" class="btn btn-primary finch-btn">
+        Continue →
+      </a>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Step 4: Net Worth Review -->
+  {% if step == 4 %}
+  <div class="wizard-card">
+    <h3 class="mb-4">Net Worth Snapshot: {{ month_display }}</h3>
+
+    <div class="alert alert-info mb-4">
+      <strong>📈 Net worth calculation</strong>
+      <p class="mb-0 mt-2">Your total net worth including all assets and liabilities.</p>
+    </div>
+
+    <table class="account-snapshot-table">
+      <tr>
+        <td>Liquid Assets (Bank Accounts)</td>
+        <td class="text-end">${{ liquid_assets|floatformat:2|intcomma }}</td>
+      </tr>
+      <tr>
+        <td>Investment Assets</td>
+        <td class="text-end">${{ investment_assets|floatformat:2|intcomma }}</td>
+      </tr>
+      <tr>
+        <td>
+          Property Value
+          {% if property_notes %}
+            <br><small class="text-muted">
+              {% for note in property_notes %}
+                {{ note }}{% if not forloop.last %}<br>{% endif %}
+              {% endfor %}
+            </small>
+          {% endif %}
+        </td>
+        <td class="text-end">${{ property_value|floatformat:2|intcomma }}</td>
+      </tr>
+      <tr>
+        <td>Liabilities</td>
+        <td class="text-end text-danger">${{ liabilities|floatformat:2|intcomma }}</td>
+      </tr>
+      <tr style="background: #f0f9ff;">
+        <td><strong>Total Net Worth</strong></td>
+        <td class="text-end"><strong style="color: #667eea; font-size: 1.2rem;">${{ total_net_worth|floatformat:2|intcomma }}</strong></td>
+      </tr>
+    </table>
+
+    <div class="wizard-actions">
+      <a href="?step=3&month={{ month }}" class="btn btn-outline-secondary finch-btn">
+        ← Back
+      </a>
+      <a href="?step=5&month={{ month }}" class="btn btn-primary finch-btn">
+        Continue →
+      </a>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Step 5: Confirm and Execute -->
+  {% if step == 5 %}
+  <div class="wizard-card">
+    <h3 class="mb-4">Confirm Month-End Close</h3>
+
+    <div class="alert alert-warning mb-4">
+      <strong>⚠️ Final Confirmation</strong>
+      <p class="mb-0 mt-2">
+        You are about to close <strong>{{ month_display }}</strong>. This will:
+      </p>
+      <ul class="mt-2 mb-0">
+        <li>Lock all transactions for this month (prevent edits/deletes)</li>
+        <li>Create a full database backup</li>
+        <li>Save permanent financial snapshots</li>
+        <li>Record net worth and account balances</li>
+      </ul>
+    </div>
+
+    <div class="card bg-light mb-4">
+      <div class="card-body">
+        <h5>Summary:</h5>
+        <div class="row mt-3">
+          <div class="col-md-6">
+            <p><strong>Income:</strong> ${{ total_income|floatformat:2|intcomma }}</p>
+            <p><strong>Expenses:</strong> ${{ total_expenses|floatformat:2|intcomma }}</p>
+          </div>
+          <div class="col-md-6">
+            <p><strong>Net Savings:</strong> <span class="{% if net_savings >= 0 %}text-success{% else %}text-danger{% endif %}">${{ net_savings|floatformat:2|intcomma }}</span></p>
+            <p><strong>Transactions:</strong> {{ transaction_count }}</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <form method="post" action="?step=5&month={{ month }}">
+      {% csrf_token %}
+
+      <div class="wizard-actions">
+        <a href="?step=4&month={{ month }}" class="btn btn-outline-secondary finch-btn">
+          ← Back
+        </a>
+        <button type="submit" class="btn btn-success finch-btn" id="confirm-close-btn">
+          🔒 Close Month & Create Backup
+        </button>
+      </div>
+    </form>
+  </div>
+  {% endif %}
+
+</div>
+
+<script>
+  // Disable double-submit and show progress
+  document.addEventListener('DOMContentLoaded', function() {
+    const confirmBtn = document.getElementById('confirm-close-btn');
+    if (confirmBtn) {
+      const form = confirmBtn.closest('form');
+      if (form) {
+        form.addEventListener('submit', function(e) {
+          // Don't prevent default - let form submit
+          confirmBtn.disabled = true;
+          confirmBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Processing... (check console for progress)';
+        });
+      }
+    }
+  });
+</script>
+
+{% endblock %}

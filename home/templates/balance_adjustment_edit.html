@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block content %}
+<div class="container mt-4" style="max-width: 980px;">
+  <h1 class="finch-page-header">✏️ Edit Balance Adjustment</h1>
+  <p class="finch-page-subtitle">
+    {{ adjustment.date|date:"Y-m-d" }} — {{ adjustment.bank_account.name }} —
+    {% if adjustment.amount >= 0 %}
+      <span class="amount-income">+${{ adjustment.amount|floatformat:2|intcomma }}</span>
+    {% else %}
+      <span class="amount-expense">−${{ adjustment.amount|floatformat:2|intcomma|cut:"-" }}</span>
+    {% endif %}
+  </p>
+
+  {% if messages %}
+    {% for message in messages %}
+      <div class="alert alert-{{ message.tags }} mb-3">{{ message }}</div>
+    {% endfor %}
+  {% endif %}
+
+  <div class="finch-card mb-4">
+    <div class="finch-card-header gradient-orange">
+      <h5 class="mb-0">⚖️ Adjustment Details</h5>
+    </div>
+
+      {% if form.errors %}
+        <div class="alert alert-danger">
+          <div class="fw-semibold mb-2">Please correct the errors below.</div>
+
+          {{ form.non_field_errors }}
+
+          <ul class="mb-0">
+            {% for field in form %}
+              {% for error in field.errors %}
+                <li><strong>{{ field.label }}:</strong> {{ error }}</li>
+              {% endfor %}
+            {% endfor %}
+          </ul>
+        </div>
+      {% endif %}
+
+      <form method="post">
+        {% csrf_token %}
+
+        <div class="row g-3">
+          <div class="col-md-4">
+            <label class="finch-form-label">Date</label>
+            {{ form.date }}
+          </div>
+
+          <div class="col-md-4">
+            <label class="finch-form-label">Amount</label>
+            {{ form.amount }}
+            <small class="text-muted d-block">Positive = increase, Negative = decrease</small>
+          </div>
+
+          <div class="col-md-4">
+            <label class="finch-form-label">Bank Account</label>
+            {{ form.bank_account }}
+          </div>
+
+          <div class="col-md-12">
+            <label class="finch-form-label">Reason</label>
+            {{ form.reason }}
+          </div>
+
+          <div class="col-md-12">
+            <label class="finch-form-label">Notes</label>
+            {{ form.notes }}
+          </div>
+        </div>
+
+        <hr class="my-4">
+
+        <div class="d-flex justify-content-between align-items-center">
+          <div class="d-flex gap-2">
+            <button class="btn btn-primary finch-btn" type="submit">💾 Save Changes</button>
+            <a class="btn btn-outline-secondary finch-btn" href="{% url 'bank_account_detail' adjustment.bank_account.id %}">
+              ← Back to Account
+            </a>
+          </div>
+
+          <!-- Delete Button -->
+          <button type="button" class="btn btn-outline-danger finch-btn" data-bs-toggle="modal" data-bs-target="#deleteModal">
+            🗑️ Delete Adjustment
+          </button>
+        </div>
+      </form>
+  </div>
+
+</div>
+
+<!-- Delete Confirmation Modal -->
+<div class="modal fade" id="deleteModal" tabindex="-1" aria-labelledby="deleteModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="deleteModalLabel">Delete Balance Adjustment?</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p>Are you sure you want to delete this balance adjustment?</p>
+        <p class="mb-0"><strong>This action cannot be undone.</strong></p>
+        <p class="text-muted small">The account balance will be automatically recalculated.</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <form method="post" style="display: inline;">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="delete">
+          <button type="submit" class="btn btn-danger">Delete Adjustment</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
