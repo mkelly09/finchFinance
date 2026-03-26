@@ -377,21 +377,34 @@
           <thead>
             <tr>
               <th>Category</th>
-              <th class="text-end">Amount</th>
+              <th class="text-end">Total</th>
+              <th class="text-end">Withholding Funded</th>
+              <th class="text-end">Out-of-Pocket</th>
             </tr>
           </thead>
           <tbody>
             {% for item in unplanned_breakdown %}
-            <tr>
+            <tr{% if item.has_withholding %} class="fw-semibold"{% endif %}>
               <td>{{ item.name }}</td>
               <td class="text-end">${{ item.spent|floatformat:2|intcomma }}</td>
+              <td class="text-end text-muted">
+                {% if item.has_withholding %}-${{ item.withholding_funded|floatformat:2|intcomma }}{% else %}—{% endif %}
+              </td>
+              <td class="text-end">${{ item.out_of_pocket|floatformat:2|intcomma }}</td>
             </tr>
+            {% if item.has_withholding %}
+            <tr class="text-muted small">
+              <td colspan="4" class="ps-3 fst-italic">Funded from: {{ item.bucket_names|join:", " }}</td>
+            </tr>
+            {% endif %}
             {% endfor %}
           </tbody>
           <tfoot>
             <tr style="border-top: 4px solid #000;">
               <td><strong>Total Unplanned</strong></td>
-              <td class="text-end"><strong>${{ total_unplanned_spent|floatformat:2|intcomma }}</strong></td>
+              <td class="text-end">${{ total_unplanned_spent|floatformat:2|intcomma }}</td>
+              <td class="text-end text-muted">{% if total_withholding_funded_unplanned %}-${{ total_withholding_funded_unplanned|floatformat:2|intcomma }}{% else %}—{% endif %}</td>
+              <td class="text-end"><strong>${{ total_true_unplanned_spent|floatformat:2|intcomma }}</strong></td>
             </tr>
           </tfoot>
         </table>

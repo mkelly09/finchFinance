@@ -57,6 +57,13 @@
         </li>
 
         <li class="nav-item">
+          <a class="nav-link {% if request.resolver_match.url_name == 'month_forecast_worksheet' %}active{% endif %}"
+             href="{% url 'month_forecast_worksheet' %}">
+            📈 Forecast
+          </a>
+        </li>
+
+        <li class="nav-item">
           <a class="nav-link {% if request.resolver_match.url_name == 'rental_properties' or 'rental' in request.path %}active{% endif %}"
              href="{% url 'rental_properties' %}{% if selected_month %}?month={{ selected_month }}{% endif %}">
             🏠 Properties

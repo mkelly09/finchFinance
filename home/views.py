@@ -1,5 +1,6 @@
 import csv
 import io
+import json
 import calendar
 from calendar import monthrange
 from collections import defaultdict
@@ -5387,6 +5388,150 @@ def create_comprehensive_backup(month_str, description="Month-end close"):
         raise e
 
 
+def month_forecast_worksheet(request):
+    """
+    Ephemeral month forecast worksheet.
+    Shows actual-to-date transactions as editable rows; JavaScript handles
+    toggling, amount overrides, and new projected rows — nothing is saved.
+    """
+    today = date.today()
+    month_str = request.GET.get('month', today.strftime('%Y-%m'))
+    try:
+        year, month_num = map(int, month_str.split('-'))
+        month_first_day = date(year, month_num, 1)
+    except (ValueError, AttributeError):
+        year, month_num = today.year, today.month
+        month_str = today.strftime('%Y-%m')
+        month_first_day = date(year, month_num, 1)
+
+    _, last_day_num = monthrange(year, month_num)
+    month_last_day = date(year, month_num, last_day_num)
+    month_display = month_first_day.strftime('%B %Y')
+
+    is_current_month = (year == today.year and month_num == today.month)
+    days_remaining = (month_last_day - today).days + 1 if is_current_month else 0
+
+    # Prev / next month nav links
+    prev_month_str = f"{year-1}-12" if month_num == 1 else f"{year}-{month_num-1:02d}"
+    next_month_str = f"{year+1}-01" if month_num == 12 else f"{year}-{month_num+1:02d}"
+
+    # Querysets
+    income_entries = Income.objects.filter(
+        date__range=(month_first_day, month_last_day)
+    ).select_related('income_category').order_by('date', 'id')
+
+    expense_entries = Expense.objects.filter(
+        date__range=(month_first_day, month_last_day)
+    ).select_related('category', 'withholding_category').order_by('date', 'id')
+
+    transfer_entries = Transfer.objects.filter(
+        date__range=(month_first_day, month_last_day),
+        parent_transfer__isnull=True,
+    ).select_related('withholding_category', 'to_account').order_by('date', 'id')
+
+    # Serialize individual transactions for JS initialization
+    income_data = []
+    for e in income_entries:
+        if e.income_category and e.income_category.name == 'Business Reimbursement':
+            continue
+        label = e.income_category.name if e.income_category else (e.category or 'Income')
+        if e.notes:
+            label = f"{label} — {e.notes[:50]}"
+        income_data.append({
+            'id': e.id,
+            'date': e.date.strftime('%b %d'),
+            'label': label,
+            'amount': float(e.amount),
+        })
+
+    expense_data = []
+    for e in expense_entries:
+        if not e.category_id or e.category.name == 'Business Expense':
+            continue
+        label = f"{e.vendor_name} / {e.category.name}" if e.vendor_name else e.category.name
+        section = 'planned' if (e.category.monthly_limit and e.category.monthly_limit > 0) else 'unplanned'
+        expense_data.append({
+            'id': e.id,
+            'date': e.date.strftime('%b %d'),
+            'label': label,
+            'category_name': e.category.name,
+            'budget': float(e.category.monthly_limit) if section == 'planned' and e.category.monthly_limit else 0,
+            'amount': float(e.amount),
+            'section': section,
+            'withholding_funded': e.withholding_category_id is not None,
+        })
+
+    withholding_data = []
+    for t in transfer_entries:
+        if not t.withholding_category_id:
+            continue
+        if t.to_account_id != t.withholding_category.account_id:
+            continue
+        withholding_data.append({
+            'id': t.id,
+            'date': t.date.strftime('%b %d'),
+            'label': t.withholding_category.name,
+            'amount': float(t.amount),
+        })
+
+    # Calculate fixed actuals (same logic as wizard step 2)
+    total_income = Decimal('0.00')
+    for e in income_entries:
+        if not (e.income_category and e.income_category.name == 'Business Reimbursement'):
+            total_income += e.amount
+
+    total_planned_spent = Decimal('0.00')
+    total_true_unplanned_spent = Decimal('0.00')
+    for e in expense_entries:
+        if not e.category_id or e.category.name == 'Business Expense':
+            continue
+        if e.category.monthly_limit and e.category.monthly_limit > 0:
+            total_planned_spent += e.amount
+        elif not e.withholding_category_id:
+            total_true_unplanned_spent += e.amount
+
+    total_withholding_actual = Decimal('0.00')
+    for t in transfer_entries:
+        if t.withholding_category_id and t.to_account_id == t.withholding_category.account_id:
+            total_withholding_actual += t.amount
+
+    actual_surplus = total_income - total_planned_spent - total_true_unplanned_spent - total_withholding_actual
+
+    # Available months for selector dropdown
+    all_dates = (
+        list(Income.objects.values_list('date', flat=True)) +
+        list(Expense.objects.values_list('date', flat=True)) +
+        list(Transfer.objects.values_list('date', flat=True))
+    )
+    month_set = {date(d.year, d.month, 1) for d in all_dates}
+    available_months = [
+        {'key': d.strftime('%Y-%m'), 'display': d.strftime('%B %Y')}
+        for d in sorted(month_set, reverse=True)
+    ]
+
+    return render(request, 'month_forecast_worksheet.html', {
+        'month_str': month_str,
+        'month_display': month_display,
+        'is_current_month': is_current_month,
+        'days_remaining': days_remaining,
+        'prev_month_str': prev_month_str,
+        'next_month_str': next_month_str,
+        'available_months': available_months,
+
+        # Serialized transaction data for JS
+        'income_json': json.dumps(income_data),
+        'expense_json': json.dumps(expense_data),
+        'withholding_json': json.dumps(withholding_data),
+
+        # Fixed actuals for the summary card
+        'actual_income': float(total_income),
+        'actual_planned': float(total_planned_spent),
+        'actual_true_unplanned': float(total_true_unplanned_spent),
+        'actual_withholding': float(total_withholding_actual),
+        'actual_surplus': float(actual_surplus),
+    })
+
+
 def month_end_wizard(request):
     """
     Multi-step wizard for closing a month:
@@ -5567,6 +5712,8 @@ def month_end_wizard(request):
         ).exclude(name='Business Expense')
         unplanned_breakdown = []
         total_unplanned_spent = Decimal('0.00')
+        total_true_unplanned_spent = Decimal('0.00')
+        total_withholding_funded_unplanned = Decimal('0.00')
 
         for category in unplanned_categories:
             spent = expense_entries.filter(category=category).aggregate(
@@ -5574,11 +5721,31 @@ def month_end_wizard(request):
             )['total'] or Decimal('0.00')
 
             if spent > 0:  # Only include if there was spending
+                withholding_funded = expense_entries.filter(
+                    category=category,
+                    withholding_category__isnull=False
+                ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+
+                out_of_pocket = spent - withholding_funded
+
+                bucket_names = list(
+                    expense_entries.filter(
+                        category=category,
+                        withholding_category__isnull=False
+                    ).values_list('withholding_category__name', flat=True).distinct()
+                )
+
                 unplanned_breakdown.append({
                     'name': category.name,
-                    'spent': spent
+                    'spent': spent,
+                    'withholding_funded': withholding_funded,
+                    'out_of_pocket': out_of_pocket,
+                    'bucket_names': bucket_names,
+                    'has_withholding': withholding_funded > 0,
                 })
                 total_unplanned_spent += spent
+                total_true_unplanned_spent += out_of_pocket
+                total_withholding_funded_unplanned += withholding_funded
 
         # Business Expense tracking (excluded from net calculations but shown for reference)
         business_expense_cat = Category.objects.filter(name='Business Expense').first()
@@ -5619,7 +5786,7 @@ def month_end_wizard(request):
 
         # Excess calculation (excludes Business Expense, includes withholding contributions)
         # Calculate true surplus: Income - (Planned + Unplanned + Withholding)
-        true_surplus = total_income - total_planned_spent - total_unplanned_spent - total_withholding_actual
+        true_surplus = total_income - total_planned_spent - total_true_unplanned_spent - total_withholding_actual
 
         # Keep net_savings for overall display (includes Business Expense)
         net_surplus = total_income - total_expenses
@@ -5672,6 +5839,8 @@ def month_end_wizard(request):
             # NEW: Unplanned expense analysis
             'unplanned_breakdown': unplanned_breakdown,
             'total_unplanned_spent': total_unplanned_spent,
+            'total_true_unplanned_spent': total_true_unplanned_spent,
+            'total_withholding_funded_unplanned': total_withholding_funded_unplanned,
 
             # NEW: Business Expense (excluded from net but shown for reference)
             'business_expense_total': business_expense_total,
@@ -5904,7 +6073,7 @@ def month_end_wizard(request):
                     # Enhanced summary fields
                     planned_budget_total=total_planned_budget,
                     planned_spent_total=total_planned_spent,
-                    unplanned_spent_total=total_unplanned_spent,
+                    unplanned_spent_total=total_true_unplanned_spent,
                     withholding_target_total=total_withholding_target,
                     withholding_actual_total=total_withholding_actual,
                     excess_saved=excess_saved,
