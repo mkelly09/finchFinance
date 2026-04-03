@@ -6100,11 +6100,17 @@ def month_end_wizard(request):
                 Q(monthly_limit__isnull=True) | Q(monthly_limit=0)
             ).exclude(name='Business Expense')
             total_unplanned_spent = Decimal('0.00')
+            total_true_unplanned_spent = Decimal('0.00')
             for category in unplanned_categories:
                 spent = expense_entries.filter(category=category).aggregate(
                     total=Sum('amount')
                 )['total'] or Decimal('0.00')
                 total_unplanned_spent += spent
+                withholding_funded = expense_entries.filter(
+                    category=category,
+                    withholding_category__isnull=False,
+                ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+                total_true_unplanned_spent += (spent - withholding_funded)
 
             # Withholding totals
             withholding_buckets = WithholdingCategory.objects.exclude(monthly_target__isnull=True)
