@@ -518,12 +518,61 @@ def dashboard(request):
                     messages.success(request, "Transfer saved successfully!")
 
                 # Only redirect if form was valid and transaction was saved
-                return redirect(f"/?month={selected_month_str}")
+                if entry_type == "expense":
+                    added_id = expense.id
+                elif entry_type == "income":
+                    added_id = income.id
+                elif entry_type == "transfer":
+                    added_id = transfer.id
+                else:
+                    added_id = ""
+                return redirect(
+                    f"{reverse('dashboard')}?month={selected_month_str}"
+                    f"&added={added_id}&added_type={entry_type}"
+                )
             else:
                 # Form is invalid - show errors
                 messages.error(request, f"Form validation failed: {form.errors}")
     else:
-        form = TransactionForm(initial={"date": selected_date})
+        # Check for prefill from a recently added transaction
+        added_id = request.GET.get("added", "")
+        added_type = request.GET.get("added_type", "")
+        initial = {"date": selected_date}
+        if added_id and added_type:
+            try:
+                if added_type == "expense":
+                    last = Expense.objects.get(pk=added_id)
+                    initial = {
+                        "date": last.date,
+                        "entry_type": "expense",
+                        "category": last.category,
+                        "bank_account": last.bank_account,
+                        "location": last.location,
+                        "rental_unit": last.rental_unit,
+                        "apply_to_withholding": bool(last.withholding_category),
+                        "withholding_category": last.withholding_category,
+                    }
+                elif added_type == "income":
+                    last = Income.objects.get(pk=added_id)
+                    initial = {
+                        "date": last.date,
+                        "entry_type": "income",
+                        "source": last.income_category,
+                        "bank_account": last.bank_account,
+                        "income_rental_unit": last.rental_unit,
+                    }
+                elif added_type == "transfer":
+                    last = Transfer.objects.get(pk=added_id)
+                    initial = {
+                        "date": last.date,
+                        "entry_type": "transfer",
+                        "from_account": last.from_account,
+                        "to_account": last.to_account,
+                        "withholding_category": last.withholding_category,
+                    }
+            except (Expense.DoesNotExist, Income.DoesNotExist, Transfer.DoesNotExist):
+                pass
+        form = TransactionForm(initial=initial)
 
     # -------------------------
     # Query transactions for month
@@ -623,6 +672,8 @@ def dashboard(request):
             for c in IncomeCategory.objects.all()
         },
         "withholding_categories": WithholdingCategory.objects.select_related("account").order_by("account__name", "name"),
+        "added_id": request.GET.get("added", ""),
+        "added_type": request.GET.get("added_type", ""),
     }
 
     return render(request, "dashboard.html", context)
@@ -4337,6 +4388,8 @@ def withholding_overview(request):
                 "selected_month": selected_month,
                 "selected_month_display": selected_month_display,
                 "withholding_accounts": withholding_accounts,
+                "all_buckets": WithholdingCategory.objects.select_related("account").order_by("account__name", "name"),
+                "today": today,
             },
         )
 
@@ -4494,6 +4547,10 @@ def withholding_overview(request):
         account.total_month_contrib = account_month_contrib
         account.total_month_payout = account_month_payout
 
+    all_buckets = WithholdingCategory.objects.select_related("account").order_by(
+        "account__name", "name"
+    )
+
     return render(
         request,
         "withholding_overview.html",
@@ -4502,6 +4559,8 @@ def withholding_overview(request):
             "selected_month": selected_month,
             "selected_month_display": selected_month_display,
             "withholding_accounts": withholding_accounts,
+            "all_buckets": all_buckets,
+            "today": today,
         },
     )
 
@@ -4852,6 +4911,77 @@ def update_withholding_transaction(request, pk):
     tx.save()
 
     return redirect("withholding_category_detail", pk=category_pk)
+
+
+@require_POST
+def withholding_bucket_transfer(request):
+    """Move funds from one withholding bucket to another."""
+    from_bucket_id = request.POST.get("from_bucket", "").strip()
+    to_bucket_id = request.POST.get("to_bucket", "").strip()
+    amount_str = request.POST.get("amount", "").strip()
+    note = request.POST.get("note", "").strip()
+    date_str = request.POST.get("date", "").strip()
+
+    redirect_url = reverse("withholding_overview")
+
+    try:
+        from_bucket = WithholdingCategory.objects.get(pk=from_bucket_id)
+        to_bucket = WithholdingCategory.objects.get(pk=to_bucket_id)
+    except (WithholdingCategory.DoesNotExist, ValueError):
+        messages.error(request, "Invalid bucket selection.")
+        return redirect(redirect_url)
+
+    if from_bucket == to_bucket:
+        messages.error(request, "Source and destination buckets must be different.")
+        return redirect(redirect_url)
+
+    try:
+        amount = Decimal(amount_str)
+        if amount <= 0:
+            raise ValueError("Amount must be positive.")
+    except (InvalidOperation, ValueError) as e:
+        messages.error(request, f"Invalid amount: {e}")
+        return redirect(redirect_url)
+
+    try:
+        transfer_date = datetime.strptime(date_str, "%Y-%m-%d").date() if date_str else date.today()
+    except ValueError:
+        transfer_date = date.today()
+
+    same_account = (from_bucket.account_id == to_bucket.account_id)
+    description = note or f"Bucket rebalance: {from_bucket.name} → {to_bucket.name}"
+
+    # Two Transfer records: one tagged to each bucket.
+    # The existing balance logic reads Transfer.from_account / to_account
+    # to determine direction for each bucket's account.
+    #
+    # Debit side (source bucket): from_account = source bucket's account
+    Transfer.objects.create(
+        date=transfer_date,
+        amount=amount,
+        from_account=from_bucket.account,
+        to_account=None if same_account else to_bucket.account,
+        withholding_category=from_bucket,
+        description=description,
+        notes="",
+    )
+    # Credit side (destination bucket): to_account = destination bucket's account
+    Transfer.objects.create(
+        date=transfer_date,
+        amount=amount,
+        from_account=None if same_account else from_bucket.account,
+        to_account=to_bucket.account,
+        withholding_category=to_bucket,
+        description=description,
+        notes="",
+    )
+
+    messages.success(
+        request,
+        f"Transferred ${amount:,.2f} from \"{from_bucket.name}\" to \"{to_bucket.name}\"."
+    )
+    return redirect(redirect_url)
+
 
 @require_http_methods(["GET", "POST"])
 def expense_edit(request, expense_id):

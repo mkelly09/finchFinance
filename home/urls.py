@@ -25,6 +25,7 @@ urlpatterns = [
     path("withholdings/", views.withholding_overview, name="withholding_overview"),
     path("withholdings/category/<int:pk>/", views.withholding_category_detail, name="withholding_category_detail"),
     path("withholdings/transaction/<int:pk>/update/", views.update_withholding_transaction, name="update_withholding_transaction"),
+    path("withholdings/bucket-transfer/", views.withholding_bucket_transfer, name="withholding_bucket_transfer"),
     # Rental Properties
     path("rental-properties/", views.rental_properties, name="rental_properties"),
     path("rental-properties/<int:property_id>/", views.rental_property_detail, name="rental_property_detail"),

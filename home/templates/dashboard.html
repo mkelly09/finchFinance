@@ -513,6 +513,16 @@
   .toast.hiding {
     animation: slideOut 0.3s ease forwards;
   }
+
+  /* Newly-added row highlight */
+  @keyframes rowHighlight {
+    0%   { background-color: #d4edda; box-shadow: inset 0 0 0 2px #28a745; }
+    70%  { background-color: #d4edda; box-shadow: inset 0 0 0 2px #28a745; }
+    100% { background-color: transparent; box-shadow: none; }
+  }
+  tr.just-added {
+    animation: rowHighlight 3s ease forwards;
+  }
 </style>
 
 <!-- Toast Notification Container -->
@@ -1960,6 +1970,49 @@
     toggleFields();
     updateBucketVisibility();
     updateRentalExtrasVisibility();
+
+    // ── Highlight and scroll to a newly-added transaction ──
+    const params = new URLSearchParams(window.location.search);
+    const addedId   = params.get("added");
+    const addedType = params.get("added_type");
+
+    if (addedId && addedType) {
+      const row = document.querySelector(
+        `tr[data-transaction-id="${addedId}"][data-transaction-type="${addedType}"]`
+      );
+      if (row) {
+        // Ensure the section is expanded
+        const sectionContent = document.getElementById(addedType + "-content");
+        if (sectionContent && sectionContent.style.display === "none") {
+          toggleSection(addedType);
+        }
+        row.classList.add("just-added");
+        setTimeout(() => row.scrollIntoView({ behavior: "smooth", block: "center" }), 100);
+      }
+
+      // Show a success banner near the form
+      const banner = document.createElement("div");
+      banner.className = "alert alert-success alert-dismissible fade show mb-3";
+      banner.setAttribute("role", "alert");
+      const typeLabel = addedType.charAt(0).toUpperCase() + addedType.slice(1);
+      banner.innerHTML = `
+        <strong>${typeLabel} added!</strong> Scroll down to see it highlighted below.
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+      `;
+      const addCard = document.getElementById("add-transaction-card");
+      if (addCard) addCard.after(banner);
+
+      // Switch to the correct tab in the add-transaction form
+      const tabs = document.querySelectorAll("#transaction-type-tabs .nav-link");
+      tabs.forEach(t => {
+        const isTarget = t.getAttribute("data-entry-type") === addedType;
+        t.classList.toggle("active", isTarget);
+      });
+      if (entryTypeEl) entryTypeEl.value = addedType;
+      toggleFields();
+      updateBucketVisibility();
+      updateRentalExtrasVisibility();
+    }
   });
 
   // ============================================

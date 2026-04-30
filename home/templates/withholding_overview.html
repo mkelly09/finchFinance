@@ -161,9 +161,12 @@
         (transfers and expenses). Activity shown for <strong>{{ selected_month_display }}</strong>.
       </p>
     </div>
-    <div class="col-lg-2 mt-3 mt-lg-0">
+    <div class="col-lg-2 mt-3 mt-lg-0 d-flex flex-column gap-2">
       <button type="button" class="btn btn-success w-100" onclick="openNewBucketModal()">
         + New Bucket
+      </button>
+      <button type="button" class="btn btn-outline-primary w-100" onclick="openBucketTransferModal()">
+        ⇄ Transfer Funds
       </button>
     </div>
     <div class="col-lg-3 mt-3 mt-lg-0">
@@ -392,6 +395,59 @@
   </form>
 </div>
 
+<!-- Bucket Transfer Modal -->
+<div id="bucketTransferModal" style="
+  display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%);
+  background:white; padding:30px; border-radius:12px; box-shadow:0 4px 20px rgba(0,0,0,0.3);
+  z-index:1000; width:560px; max-width:90%;">
+  <h3 class="mb-1">Transfer Between Buckets</h3>
+  <p class="text-muted mb-4" style="font-size:0.9rem;">Move funds from one withholding bucket to another. This creates a negative transaction on the source and a positive one on the destination.</p>
+  <form method="post" action="{% url 'withholding_bucket_transfer' %}">
+    {% csrf_token %}
+
+    <div class="mb-3">
+      <label for="bt-from-bucket" class="form-label">From Bucket <span class="text-danger">*</span></label>
+      <select class="form-select" name="from_bucket" id="bt-from-bucket" required>
+        <option value="">Select source bucket…</option>
+        {% for bucket in all_buckets %}
+          <option value="{{ bucket.id }}">{{ bucket.account.name }} — {{ bucket.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="mb-3">
+      <label for="bt-to-bucket" class="form-label">To Bucket <span class="text-danger">*</span></label>
+      <select class="form-select" name="to_bucket" id="bt-to-bucket" required>
+        <option value="">Select destination bucket…</option>
+        {% for bucket in all_buckets %}
+          <option value="{{ bucket.id }}">{{ bucket.account.name }} — {{ bucket.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="row mb-3">
+      <div class="col-md-6">
+        <label for="bt-amount" class="form-label">Amount <span class="text-danger">*</span></label>
+        <input type="number" step="0.01" min="0.01" class="form-control" name="amount" id="bt-amount" placeholder="0.00" required>
+      </div>
+      <div class="col-md-6">
+        <label for="bt-date" class="form-label">Date</label>
+        <input type="date" class="form-control" name="date" id="bt-date" value="{{ today|date:'Y-m-d' }}">
+      </div>
+    </div>
+
+    <div class="mb-4">
+      <label for="bt-note" class="form-label">Note (optional)</label>
+      <input type="text" class="form-control" name="note" id="bt-note" placeholder="e.g. Rebalancing buckets">
+    </div>
+
+    <div class="d-flex justify-content-end gap-2">
+      <button type="button" class="btn btn-secondary" onclick="closeBucketTransferModal()">Cancel</button>
+      <button type="submit" class="btn btn-primary">Transfer Funds</button>
+    </div>
+  </form>
+</div>
+
 <script>
   function openNewBucketModal() {
     document.getElementById('modalBackdrop').style.display = 'block';
@@ -401,21 +457,39 @@
   function closeNewBucketModal() {
     document.getElementById('modalBackdrop').style.display = 'none';
     document.getElementById('newBucketModal').style.display = 'none';
-    // Reset form
     document.getElementById('new-bucket-form').reset();
   }
 
-  // ESC key closes modal
+  function openBucketTransferModal() {
+    // Set today's date as default
+    const today = new Date().toISOString().split('T')[0];
+    const dateEl = document.getElementById('bt-date');
+    if (dateEl && !dateEl.value) dateEl.value = today;
+
+    document.getElementById('modalBackdrop').style.display = 'block';
+    document.getElementById('bucketTransferModal').style.display = 'block';
+  }
+
+  function closeBucketTransferModal() {
+    document.getElementById('modalBackdrop').style.display = 'none';
+    document.getElementById('bucketTransferModal').style.display = 'none';
+  }
+
+  // ESC key closes all modals
   document.addEventListener('keydown', function(event) {
     if (event.key === 'Escape') {
       closeNewBucketModal();
+      closeBucketTransferModal();
     }
   });
 
-  // Backdrop click closes modal
+  // Backdrop click closes all modals
   const backdropEl = document.getElementById('modalBackdrop');
   if (backdropEl) {
-    backdropEl.addEventListener('click', closeNewBucketModal);
+    backdropEl.addEventListener('click', function() {
+      closeNewBucketModal();
+      closeBucketTransferModal();
+    });
   }
 </script>
 
