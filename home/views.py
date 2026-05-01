@@ -557,7 +557,7 @@ def dashboard(request):
                     initial = {
                         "date": last.date,
                         "entry_type": "income",
-                        "source": last.income_category,
+                        "source": last.income_category_id,
                         "bank_account": last.bank_account,
                         "income_rental_unit": last.rental_unit,
                     }
