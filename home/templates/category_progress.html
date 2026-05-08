@@ -92,31 +92,17 @@
           <strong>-${{ total_expenses_remaining|floatformat:2|intcomma }}</strong>
         </div>
 
-        <!-- Future Expense Buckets (withholdings) -->
+        <!-- Set Aside (all withholding/savings contributions) -->
         {% if total_withholding_actual > 0 %}
         <div class="metric" style="margin-top: 8px;">
-          <span>Future Expenses (Realized):</span>
+          <span>Set Aside (Realized):</span>
           <strong>-${{ total_withholding_actual|floatformat:2|intcomma }}</strong>
         </div>
         {% endif %}
         {% if total_withholding_remaining > 0 %}
         <div class="metric">
-          <span>Future Expenses (Planned):</span>
+          <span>Set Aside (Planned):</span>
           <strong>-${{ total_withholding_remaining|floatformat:2|intcomma }}</strong>
-        </div>
-        {% endif %}
-
-        <!-- Savings -->
-        {% if total_savings_actual > 0 %}
-        <div class="metric" style="margin-top: 8px;">
-          <span>Savings (Realized)*:</span>
-          <strong>-${{ total_savings_actual|floatformat:2|intcomma }}</strong>
-        </div>
-        {% endif %}
-        {% if total_savings_remaining > 0 %}
-        <div class="metric">
-          <span>Savings (Planned)*:</span>
-          <strong>-${{ total_savings_remaining|floatformat:2|intcomma }}</strong>
         </div>
         {% endif %}
       </div>
@@ -134,14 +120,6 @@
           </strong>
         </div>
       </div>
-
-      {% if total_savings_actual > 0 or total_savings_remaining > 0 %}
-      <div class="col-12 mt-2">
-        <div style="font-size: 0.85rem; opacity: 0.9; font-style: italic;">
-          * Savings buckets: {{ savings_buckets|join:", "|title }}
-        </div>
-      </div>
-      {% endif %}
 
       <div class="col-12 mt-2">
         <div style="font-size: 0.85rem; opacity: 0.85; border-top: 1px solid rgba(255,255,255,0.2); padding-top: 8px;">

@@ -593,7 +593,9 @@
       <div class="col-md-6 mb-3">
         <label class="form-label">Withholding Account:</label>
         <select class="form-select" name="account" id="edit-withholding-account" required>
-          {{ withholding_form.account }}
+          {% for wa in withholding_accounts %}
+            <option value="{{ wa.pk }}">{{ wa.name }}</option>
+          {% endfor %}
         </select>
       </div>
 

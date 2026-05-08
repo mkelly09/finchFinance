@@ -915,8 +915,7 @@ def category_progress(request):
         # Expense from a bucket always reduces it
         month_payouts[bucket.id] += e.amount
 
-    # Define which buckets are "true savings" vs "future expenses"
-    SAVINGS_BUCKETS = ["vacation", "wedding", "rrsp"]  # Case-insensitive matching
+    SAVINGS_BUCKETS = []  # No longer used — all withholding contributions are treated uniformly
 
     # Build target overrides from snapshots for closed months
     _withholding_snaps = (
@@ -931,9 +930,7 @@ def category_progress(request):
 
     withholding_summaries = []
     total_withholding_remaining = Decimal("0.00")
-    total_savings_remaining = Decimal("0.00")
     total_withholding_actual = Decimal("0.00")
-    total_savings_actual = Decimal("0.00")
 
     for bucket in buckets:
         if withholding_target_overrides is not None:
@@ -956,22 +953,12 @@ def category_progress(request):
         overall_target = bucket.target_amount   # yearly/overall target
         remaining = bucket.remaining_to_target()
 
-        # Check if this is a savings bucket
-        is_savings = any(savings_name.lower() in bucket.name.lower() for savings_name in SAVINGS_BUCKETS)
-
         # Track realized contributions (money already set aside this month)
-        if is_savings:
-            total_savings_actual += contrib
-        else:
-            total_withholding_actual += contrib
+        total_withholding_actual += contrib
 
         # Calculate remaining planned contributions
         remaining_contrib = (monthly_target - contrib) if contrib < monthly_target else Decimal("0.00")
-
-        if is_savings:
-            total_savings_remaining += remaining_contrib
-        else:
-            total_withholding_remaining += remaining_contrib
+        total_withholding_remaining += remaining_contrib
 
         # Progress bar is based on monthly contributions vs monthly_target
         percent = (contrib / monthly_target) * Decimal("100")
@@ -990,7 +977,6 @@ def category_progress(request):
                 "month_net": net,
                 "percent": percent,
                 "bar_color": get_income_progress_color(percent),  # Use income color logic for contributions
-                "is_savings": is_savings,
             }
         )
 
@@ -1003,18 +989,14 @@ def category_progress(request):
     # Expenses: actual spent + remaining budget
     total_expenses_projected = total_expenses_actual + total_expenses_remaining
 
-    # Future expense buckets: money already set aside + remaining planned contributions
+    # Set aside: money already contributed + remaining planned contributions
     total_withholding_projected = total_withholding_actual + total_withholding_remaining
-
-    # Savings: money already saved + remaining planned contributions
-    total_savings_projected = total_savings_actual + total_savings_remaining
 
     # Final projected balance = Income - all outflows
     cash_flow_balance = (
         total_projected_income
         - total_expenses_projected
         - total_withholding_projected
-        - total_savings_projected
     )
 
     # Determine health status based on final balance
@@ -1070,13 +1052,10 @@ def category_progress(request):
         "total_expenses_remaining": total_expenses_remaining,
         "total_withholding_actual": total_withholding_actual,
         "total_withholding_remaining": total_withholding_remaining,
-        "total_savings_actual": total_savings_actual,
-        "total_savings_remaining": total_savings_remaining,
         "cash_flow_balance": cash_flow_balance,
         "health_status": health_status,
         "health_class": health_class,
         "health_icon": health_icon,
-        "savings_buckets": SAVINGS_BUCKETS,  # For display in template
     }
     return render(request, "category_progress.html", context)
 
@@ -2779,6 +2758,7 @@ def category_list(request):
     expense_form = CategoryForm()
     income_form = IncomeCategoryForm()
     withholding_form = WithholdingCategoryForm()
+    withholding_accounts = BankAccount.objects.filter(is_withholding_account=True).order_by("name")
 
     return render(request, "category_list.html", {
         "expense_categories": expense_categories,
@@ -2788,6 +2768,7 @@ def category_list(request):
         "expense_form": expense_form,
         "income_form": income_form,
         "withholding_form": withholding_form,
+        "withholding_accounts": withholding_accounts,
     })
 
 class BankAccountForm(ModelForm):
